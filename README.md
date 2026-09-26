@@ -196,22 +196,40 @@ history anyone reads. Two limits worth knowing before adding a project:
 
 ## Handling blocked repos
 
+**Blocked** means gitleaks found something that looks like a secret, so the
+repo was left alone: nothing was committed or pushed. It stays blocked until
+the finding is removed or allowlisted.
+
 After a blocked run, the **Output** pane shows a **Leak report** with the flagged
-file, line number, and rule. Two quick-action buttons appear on the blocked row:
+file, line, rule, and *where* it is: in uncommitted changes, in local commits
+not yet pushed, or in history already on GitHub. **Fix leak…** on the row
+explains the block and offers the options that fit that location.
 
-**If it's a false positive** (a variable name, SQL column, etc. that looks like
-a secret but isn't):
-- Click **Allowlist** on the repo row — one click, adds the fingerprint to
-  `.gitleaksignore`, done.
-- Or click **Fix leak…** → choose *False positive* → same result via a dialog.
+**If it's a false positive** (a test dummy, an example value, a SQL literal that
+looks like a key):
+- Click **Allowlist**, or **Fix leak…** → *False positive*. The app asks first,
+  then adds the fingerprint to `.gitleaksignore`. That is a local file edit:
+  nothing is committed or pushed. The confirmation offers **Undo**, and
+  **Fix leak… → Manage allowlist** removes entries later. The repo is
+  re-checked automatically.
+- Fingerprints are pinned to a commit, so amending or rebasing that commit
+  brings the finding back.
 
-**If it's a real secret** (API key, token, password accidentally committed):
-- Click **Fix leak…** → choose *Real secret — remove from online repo history*.
-- The app runs `git-filter-repo` to scrub the value from every commit and
-  force-pushes to origin. Your local files are not modified.
-- Requires `brew install git-filter-repo` if not already installed.
-
-After either action, run a dry-run to confirm the repo is unblocked.
+**If it's a real secret** (API key, token, password):
+- *Uncommitted*: delete it from the file (move it to an env var or keychain).
+  Nothing else is needed.
+- *Committed, not yet pushed*: **Fix leak…** → *Real secret*. The value is
+  replaced with `[REDACTED]` in every commit on this Mac. Nothing is force-pushed:
+  the next sync publishes the cleaned commits through the gate.
+- *Already on GitHub*: **rotate or revoke the key first**. Rewriting history
+  does not un-leak it. Then **Fix leak…** → *Real secret*. The app rewrites
+  history and scans all of it again. It force-pushes, leased to the commits
+  origin had, only if that scan is clean. This cannot be undone on GitHub.
+- The engine's output is redacted, so the app looks the flagged value up again
+  by scanning just that commit. If it can't pin down the exact value, it stops
+  without touching history. It also refuses to rewrite a working tree with
+  uncommitted changes. Committed copies of the file will read `[REDACTED]`.
+- Requires `brew install git-filter-repo`.
 
 You can also manage `.gitleaksignore` by hand: one fingerprint per line, in the
 format gitleaks uses (`<commit>:<file>:<rule>:<line>`).
@@ -260,13 +278,14 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     list stays responsive. Toggling updates the button label immediately
     without waiting for the next refresh.
   - **Fix leak…** button — appears on every row; turns red while the repo is
-    currently blocked, back to normal once it clears. Opens a triage dialog:
-    - *Real secret*: rewrites the full git history with `git-filter-repo`
-      (replacing the flagged value with `[REDACTED]`) and force-pushes to
-      origin. Your local files are never modified.
-    - *False positive*: adds the fingerprint to `.gitleaksignore` in one step.
-  - **Allowlist** button — appears on a row only after a blocked run. One click
-    to add the gitleaks fingerprint to `.gitleaksignore` with no further dialogs.
+    currently blocked, back to normal once it clears. Opens a dialog that
+    explains the block and where the finding is (see *Handling blocked repos*):
+    - *False positive*: allowlist with confirmation and Undo.
+    - *Real secret*: `git-filter-repo` rewrite. Force-pushes only if the value
+      was already on GitHub, and only after a clean rescan.
+    - *Manage allowlist*: view and remove `.gitleaksignore` entries.
+  - **Allowlist** button — appears on a row only after a blocked run. Same
+    confirmed, undoable allowlist as *Fix leak… → False positive*.
 - **Auto-reload** — the list refreshes automatically when you save
   `autosync_repos.txt`, with no restart needed (`QFileSystemWatcher`).
 - **Config-entry identity** — status is keyed by the configured entry, not only the leaf

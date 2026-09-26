@@ -113,7 +113,7 @@ class RepoRow(QWidget):
         if on_ignore is not None:
             self.ignore_btn = QPushButton("Fix leak…")
             self.ignore_btn.setProperty("class", "rowButton")
-            self.ignore_btn.setToolTip("Triage this blocked finding: remove the secret from history, or allowlist as a false positive.")
+            self.ignore_btn.setToolTip("Explain why this repo is blocked and how to clear it: allowlist a false positive, remove a real secret from history, or manage the allowlist.")
             self.ignore_btn.clicked.connect(lambda: on_ignore(name))
             layout.addWidget(self.ignore_btn)
         else:
@@ -122,7 +122,7 @@ class RepoRow(QWidget):
         if on_allowlist is not None:
             self.allowlist_btn = QPushButton("Allowlist")
             self.allowlist_btn.setProperty("class", "rowButton")
-            self.allowlist_btn.setToolTip("One-click: add this finding's fingerprint to .gitleaksignore (false positive).")
+            self.allowlist_btn.setToolTip("Add this finding to .gitleaksignore as a false positive. Asks first, local only, undoable.")
             self.allowlist_btn.setVisible(False)  # shown only when a finding is active
             self.allowlist_btn.clicked.connect(lambda: on_allowlist(name))
             layout.addWidget(self.allowlist_btn)

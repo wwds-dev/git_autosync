@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import config, login_item, paths, repo_state, scheduler, version
+from . import config, leak_triage, login_item, paths, repo_state, scheduler, version
 from .create_repo_dialog import CreateRepoDialog
 from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
@@ -816,8 +816,11 @@ class MainWindow(QMainWindow):
                     lines.append(f"     {loc}{rule}")
                 if f.get("fingerprint"):
                     lines.append(f"     Fingerprint: {f['fingerprint']}")
+                where = leak_triage.locate(paths.resolve_entry(name), f)
+                lines.append(f"     Found {leak_triage.WHERE_TEXT[where]}.")
             lines.append("─────────────────────────────────────────────")
-            lines.append("Click 'Allowlist' on the repo row for a false positive, or 'Fix leak…' to triage.")
+            lines.append("Nothing was pushed for these repos. Open 'Fix leak…' on the row "
+                         "for what this means and how to clear it.")
             self.output_pane.appendPlainText("\n".join(lines))
 
         # Update "Ignore" button availability on blocked rows (via privacy_btn slot reuse
@@ -942,154 +945,112 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", str(e))
 
     def _on_open_ignore(self, name: str):
-        lab = paths.lab_active_dir()
-        repo_path = lab / name
+        repo_path = paths.resolve_entry(name)
         if not repo_path.is_dir():
             QMessageBox.warning(self, "Not found", f"Could not find repo directory for '{name}'.")
             return
         finding = self._last_findings.get(name)
+        if not (finding and finding.get("file")):
+            IgnoreDialog(self, repo_path, finding=finding).exec()
+            return
 
-        if finding and finding.get("file"):
-            # Triage: real secret or false positive?
-            loc = finding["file"]
-            if finding.get("line"):
-                loc += f":{finding['line']}"
-            rule = finding.get("rule", "unknown rule")
-            has_secret = bool(finding.get("secret"))
-            msg = (
-                f"<b>{name}</b> is blocked by gitleaks.<br><br>"
-                f"Finding: <code>{loc}</code> &nbsp;·&nbsp; rule: <code>{rule}</code><br><br>"
-                "Is this a <b>real secret</b> (e.g. API key, token, password) "
-                "or a <b>false positive</b> (e.g. a variable name that looks like one)?"
-            )
-            box = QMessageBox(self)
-            box.setWindowTitle("Blocked repo — what would you like to do?")
-            box.setTextFormat(Qt.RichText)
-            box.setText(msg)
-            if has_secret:
-                real_btn = box.addButton(
-                    "Real secret — remove from online repo history",
-                    QMessageBox.AcceptRole,
-                )
-            else:
-                real_btn = None
-            false_btn = box.addButton(
-                "False positive — allowlist this fingerprint",
-                QMessageBox.ActionRole,
-            )
-            box.addButton("Cancel", QMessageBox.RejectRole)
-            box.exec()
-            clicked = box.clickedButton()
-            if clicked is real_btn:
-                self._purge_secret_from_history(name, repo_path, finding)
-                return
-            elif clicked is false_btn:
-                self._allowlist_fingerprint(name, repo_path, finding)
-                return
-            else:
-                return  # Cancel
-
-        dialog = IgnoreDialog(self, repo_path, finding=finding)
-        dialog.exec()
+        where = leak_triage.locate(repo_path, finding)
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Why is {name} blocked?")
+        box.setTextFormat(Qt.RichText)
+        box.setText(leak_triage.describe_block(name, finding, where))
+        false_btn = box.addButton("False positive — allowlist…", QMessageBox.ActionRole)
+        real_btn = None
+        if where != leak_triage.UNCOMMITTED:
+            real_btn = box.addButton("Real secret — remove from history…",
+                                     QMessageBox.AcceptRole)
+        manage_btn = box.addButton("Manage allowlist…", QMessageBox.ActionRole)
+        box.addButton("Close", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is false_btn:
+            self._allowlist_fingerprint(name, repo_path, finding)
+        elif real_btn is not None and clicked is real_btn:
+            self._purge_secret_from_history(name, repo_path, finding)
+        elif clicked is manage_btn:
+            IgnoreDialog(self, repo_path, finding=finding).exec()
 
     def _purge_secret_from_history(self, name: str, repo_path: Path, finding: dict):
-        """Rewrite git history to replace the secret with [REDACTED], then force-push.
+        """Replace the flagged value with [REDACTED] in every commit.
 
-        Uses git-filter-repo (must be installed). Never modifies the local working file.
+        The engine's output is redacted, so the value is looked up again from
+        the flagged commit (leak_triage.resolve_secret). Force-pushes only when
+        the value had already reached origin, and only after a full scan of the
+        rewritten history comes back clean.
         """
-        import shutil, tempfile
+        import shutil
 
         git = paths.find_git() or "git"
-        filter_repo = shutil.which("git-filter-repo") or shutil.which("git_filter_repo")
-
-        secret = finding.get("secret", "")
-        fp = finding.get("fingerprint", "")
-        loc = finding["file"] + (f":{finding['line']}" if finding.get("line") else "")
-
+        filter_repo = (paths.find_binary("git-filter-repo")
+                       or shutil.which("git_filter_repo"))
         if not filter_repo:
             QMessageBox.warning(
                 self, "git-filter-repo not found",
                 "git-filter-repo is required to rewrite history.\n\n"
-                "Install it with:\n  brew install git-filter-repo\n\n"
-                "Then try again."
-            )
+                "Install it with:\n  brew install git-filter-repo\n\nThen try again.")
             return
 
+        secret = leak_triage.resolve_secret(repo_path, finding, self.gitleaks_cmd, git=git)
         if not secret:
             QMessageBox.warning(
-                self, "Secret value not captured",
-                "The secret value wasn't captured from gitleaks output.\n"
-                "Run a dry-run first so the app can record the finding, then try again."
-            )
+                self, "Couldn't pin down the flagged value",
+                "gitleaks no longer reports this exact finding in its commit, so "
+                "there is nothing safe to rewrite. History was not touched.\n\n"
+                "Run a dry-run to refresh the finding, then try again.")
             return
 
-        reply = QMessageBox.question(
-            self, "Rewrite git history — are you sure?",
-            f"This will:\n"
-            f"  1. Replace every occurrence of the flagged value in ALL commits\n"
-            f"     with [REDACTED] — across the full git history.\n"
-            f"  2. Force-push to origin, rewriting the online repo.\n\n"
-            f"Finding: {loc}\n"
-            f"Fingerprint: {fp}\n\n"
-            f"Your local file is NOT modified — only git history is changed.\n\n"
-            f"This cannot be undone on the remote. Proceed?",
-        )
-        if reply != QMessageBox.Yes:
+        published = leak_triage.published_with(repo_path, secret, git=git)
+        loc = finding["file"] + (f":{finding['line']}" if finding.get("line") else "")
+        if published:
+            if QMessageBox.warning(
+                self, "Rotate the key first",
+                "This value is already on GitHub. Removing it from history does not "
+                "un-leak it — anyone may already have a copy, and forks or caches "
+                "keep old commits.\n\n"
+                "Have you rotated or revoked this key with its provider?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            ) != QMessageBox.Yes:
+                return
+            steps = ("  2. Scan the rewritten history; push only if it is clean.\n"
+                     "  3. Force-push the rewritten branches to origin.\n\n"
+                     "This cannot be undone on GitHub.")
+        else:
+            steps = ("  2. Nothing is force-pushed — the value never reached GitHub.\n"
+                     "     The next sync publishes the cleaned commits through the leak-gate.")
+        if QMessageBox.question(
+            self, "Rewrite git history?",
+            f"Finding: {loc}\n\n"
+            "  1. Replace the flagged value with [REDACTED] in every commit.\n"
+            f"{steps}\n\n"
+            "Committed copies of the file will read [REDACTED]; commit hashes from "
+            "that point on change, so allowlist fingerprints for them go stale.\n\n"
+            "Proceed?",
+        ) != QMessageBox.Yes:
             return
 
-        # Write a git-filter-repo replacements file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
-                                         delete=False, prefix="autosync_replace_") as f:
-            f.write(f"literal:{secret}==>[REDACTED]\n")
-            replacements_path = f.name
-
+        self.output_pane.appendPlainText(f"\nRewriting history for {name} — this may take a moment…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self.output_pane.appendPlainText(
-                f"\nRewriting history for {name} — this may take a moment…"
-            )
-            r = subprocess.run(
-                [filter_repo, "--replace-text", replacements_path,
-                 "--force", "--refs", "refs/heads/HEAD"],
-                cwd=str(repo_path), capture_output=True, text=True,
-            )
-            if r.returncode != 0:
-                self.output_pane.appendPlainText(
-                    f"git-filter-repo failed:\n{r.stderr or r.stdout}"
-                )
-                QMessageBox.critical(self, "Rewrite failed",
-                                     f"git-filter-repo exited with errors:\n{r.stderr or r.stdout}")
-                return
-
-            # Force-push all rewritten refs
-            push_r = subprocess.run(
-                [git, "push", "--force-with-lease", "--all", "origin"],
-                cwd=str(repo_path), capture_output=True, text=True,
-            )
-            if push_r.returncode != 0:
-                self.output_pane.appendPlainText(
-                    f"Force-push failed:\n{push_r.stderr or push_r.stdout}"
-                )
-                QMessageBox.critical(self, "Push failed",
-                                     f"History was rewritten locally but push failed:\n"
-                                     f"{push_r.stderr or push_r.stdout}")
-                return
-
-            self.output_pane.appendPlainText(
-                f"Done — secret purged from {name}'s history and pushed to origin.\n"
-                "Run a dry-run to confirm gitleaks no longer blocks this repo."
-            )
-            QMessageBox.information(
-                self, "History cleaned",
-                f"The secret has been removed from {name}'s full git history\n"
-                "and the rewritten history has been pushed to origin.\n\n"
-                "Your local files were not modified.\n\n"
-                "Run a dry-run to confirm the repo is now unblocked."
-            )
+            result = leak_triage.purge_secret(repo_path, secret, filter_repo,
+                                              self.gitleaks_cmd, git=git, push=published)
+        except leak_triage.PurgeError as e:
+            self.output_pane.appendPlainText(f"Stopped: {e}")
+            QMessageBox.critical(self, "History rewrite stopped", str(e))
+            return
         finally:
-            Path(replacements_path).unlink(missing_ok=True)
+            QApplication.restoreOverrideCursor()
+        self.output_pane.appendPlainText(result + " Re-checking…")
+        QMessageBox.information(self, "History cleaned",
+                                f"{result}\n\nA dry-run will now re-check {name}.")
+        self._on_dry_run_single(name)
 
     def _allowlist_fingerprint(self, name: str, repo_path: Path, finding: dict):
-        """Add the finding's fingerprint to .gitleaksignore in one step."""
+        """Confirm, add the fingerprint to .gitleaksignore, offer Undo, re-check."""
         fp = finding.get("fingerprint", "")
         if not fp:
             QMessageBox.warning(self, "No fingerprint",
@@ -1097,24 +1058,44 @@ class MainWindow(QMainWindow):
                                 "Run a dry-run first, then try again.")
             return
         ignore_path = repo_path / ".gitleaksignore"
-        existing = ignore_path.read_text() if ignore_path.exists() else ""
-        if fp in existing.splitlines():
+        if fp in leak_triage.ignore_entries(ignore_path):
             QMessageBox.information(self, "Already allowlisted",
-                                    "This fingerprint is already in .gitleaksignore.")
+                                    "This fingerprint is already in .gitleaksignore.\n"
+                                    "Run a dry-run to refresh the status.")
             return
-        with open(ignore_path, "a") as f:
-            if existing and not existing.endswith("\n"):
-                f.write("\n")
-            f.write(fp + "\n")
-        QMessageBox.information(
-            self, "Allowlisted",
-            f"Added to {name}/.gitleaksignore:\n{fp}\n\n"
-            "Run a dry-run to confirm gitleaks no longer blocks this repo."
-        )
+
+        loc = finding.get("file", "?") + (f":{finding['line']}" if finding.get("line") else "")
+        pinned = ("\n\nThe entry is pinned to one commit: if that commit is amended "
+                  "or rebased, the finding comes back and needs allowlisting again."
+                  if leak_triage.finding_commit(finding) else "")
+        if QMessageBox.question(
+            self, "Allowlist as a false positive?",
+            f"{loc}  ·  {finding.get('rule') or 'unknown rule'}\n\n"
+            "Only do this if the value is NOT a real secret (a test dummy, an "
+            "example value, a name that only looks like a key).\n\n"
+            f"This adds one line to {name}/.gitleaksignore on this Mac. Nothing is "
+            "committed or pushed, and you can undo it here or later via "
+            f"Fix leak… → Manage allowlist.{pinned}",
+        ) != QMessageBox.Yes:
+            return
+
+        leak_triage.append_ignore_entry(ignore_path, fp)
+        box = QMessageBox(self)
+        box.setWindowTitle("Allowlisted")
+        box.setText(f"Added to {name}/.gitleaksignore:\n{fp}\n\n"
+                    "A dry-run will now re-check the repo.")
+        undo_btn = box.addButton("Undo", QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Ok)
+        box.exec()
+        if box.clickedButton() is undo_btn:
+            leak_triage.remove_ignore_entry(ignore_path, fp)
+            self.output_pane.appendPlainText(f"\nUndone: {fp} removed from {name}/.gitleaksignore.")
+            return
+        self.output_pane.appendPlainText(f"\nAllowlisted {fp} in {name}. Re-checking…")
+        self._on_dry_run_single(name)
 
     def _on_allowlist_single(self, name: str):
-        lab = paths.lab_active_dir()
-        repo_path = lab / name
+        repo_path = paths.resolve_entry(name)
         if not repo_path.is_dir():
             QMessageBox.warning(self, "Not found", f"Could not find repo directory for '{name}'.")
             return

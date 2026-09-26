@@ -3,8 +3,12 @@
 gitleaks treats each line as an ignored fingerprint, formatted as:
   <commit>:<file>:<rule>:<line>
 The dialog lets the user view, add (from a last finding), and remove entries.
+Comment lines are left alone: edits go line by line through leak_triage, so
+the notes explaining why an entry exists survive.
 """
 from pathlib import Path
+
+from . import leak_triage
 
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget,
@@ -25,7 +29,9 @@ class IgnoreDialog(QDialog):
         info = QLabel(
             "Fingerprints listed here are skipped by gitleaks. "
             "Only add entries you are certain are false positives — "
-            "ignoring a real secret is a security risk."
+            "ignoring a real secret is a security risk. This file is local "
+            "until committed; removing an entry re-enables the block on the "
+            "next scan."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #6E6E73; font-size: 12px;")
@@ -58,16 +64,8 @@ class IgnoreDialog(QDialog):
 
     def _load(self):
         self.entry_list.clear()
-        if self._ignore_path.exists():
-            for line in self._ignore_path.read_text().splitlines():
-                line = line.strip()
-                if line:
-                    self.entry_list.addItem(line)
-
-    def _save(self):
-        entries = [self.entry_list.item(i).text()
-                   for i in range(self.entry_list.count())]
-        self._ignore_path.write_text("\n".join(entries) + ("\n" if entries else ""))
+        for fp in leak_triage.ignore_entries(self._ignore_path):
+            self.entry_list.addItem(fp)
 
     def _add_finding(self):
         fp = self._finding["fingerprint"]
@@ -77,8 +75,8 @@ class IgnoreDialog(QDialog):
                 QMessageBox.information(self, "Already ignored",
                                         "This fingerprint is already in the ignore list.")
                 return
-        self.entry_list.addItem(fp)
-        self._save()
+        leak_triage.append_ignore_entry(self._ignore_path, fp)
+        self._load()
         QMessageBox.information(
             self, "Added",
             f"Added to .gitleaksignore:\n{fp}\n\n"
@@ -95,5 +93,5 @@ class IgnoreDialog(QDialog):
             f"Remove this fingerprint from the ignore list?\n\n{item.text()}"
         )
         if reply == QMessageBox.Yes:
-            self.entry_list.takeItem(row)
-            self._save()
+            leak_triage.remove_ignore_entry(self._ignore_path, item.text())
+            self._load()
