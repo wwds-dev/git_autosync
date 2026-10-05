@@ -68,3 +68,29 @@ def test_tray_menu_text_contrasts_with_its_background():
     hi, lo = sorted([luminance(QColor(*bg)), luminance(QColor(*fg))], reverse=True)
     ratio = (hi + 0.05) / (lo + 0.05)
     assert ratio >= 4.5, f"menu text contrast {ratio:.1f}:1 on bg={bg}, fg={fg}"
+
+
+def test_repo_rows_are_actually_banded_on_screen(window):
+    """Striping the RepoRow widget looked right when the widget was grabbed in
+    isolation but showed nothing in the list: an item widget sits on the
+    viewport and the item's own background is painted over it. Measure what the
+    viewport composites, not what the row reports."""
+    from collections import Counter
+
+    app = QtWidgets.QApplication.instance()
+    window.resize(1200, 700)
+    for _ in range(6):
+        app.processEvents()
+    rows = list(window._row_widgets.values())
+    if len(rows) < 2:
+        pytest.skip("needs at least two repos")
+    img = window.repo_list.viewport().grab().toImage()
+    h = rows[0].height()
+
+    def band(i):
+        y = i * h + h // 2
+        px = [img.pixelColor(x, y) for x in range(0, img.width(), 8)]
+        return Counter((p.red(), p.green(), p.blue()) for p in px).most_common(1)[0][0]
+
+    first, second = band(0), band(1)
+    assert first != second, f"rows are not banded: both {first}"

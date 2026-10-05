@@ -26,7 +26,7 @@ _STALE_STYLE = "background:#FFF8E7; color:#92400E; border-radius:5px; padding:2p
 _EMPTY_STYLE = "background:transparent;"
 
 
-_STRIPE_BG = "#FAFAFC"   # every other row, so a wide row stays readable
+_STRIPE_BG = "#EFEFF4"   # ~6% below white: visible as a band, still quiet
 
 
 class RepoRow(QWidget):
@@ -201,12 +201,15 @@ class RepoRow(QWidget):
         return self._missing
 
     def set_stripe(self, odd: bool):
-        """Tint alternate rows. At this width the name and its buttons are far
-        enough apart that an unbroken white field is hard to track across."""
-        self.setAutoFillBackground(True)
-        self.setStyleSheet(
-            f"RepoRow {{ background: {_STRIPE_BG}; }}" if odd
-            else "RepoRow { background: transparent; }")
+        """No-op: banding is the list's job.
+
+        A widget set with setItemWidget sits on the viewport and the item's own
+        background is painted over it, so styling the row itself showed nothing
+        on screen even though the widget grabbed as tinted. QListWidget's
+        alternating row colours paint the item, which does show.
+        """
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setAutoFillBackground(False)
 
     def set_detail(self, text: str | None):
         """Hover text explaining a status — why a sync errored or was blocked."""

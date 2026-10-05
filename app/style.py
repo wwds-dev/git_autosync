@@ -14,6 +14,18 @@ QMainWindow, QDialog {{
     background: #F5F5F7;
 }}
 
+/* ── Repo list ──────────────────────────────────────────────── */
+QListWidget {{
+    background: #FFFFFF;
+    alternate-background-color: #EFEFF4;
+    border: 1px solid #E5E5EA;
+    border-top: none;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}}
+QListWidget::item {{ background: transparent; }}
+QListWidget::item:alternate {{ background: #EFEFF4; }}
+
 /* ── Menus ──────────────────────────────────────────────────── */
 /* The global QWidget rule paints near-black text on every widget. A popup
    menu is drawn on the system surface, which is dark in Dark Mode, so the

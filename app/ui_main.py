@@ -238,6 +238,9 @@ class MainWindow(QMainWindow):
 
         self.repo_list = QListWidget()
         self.repo_list.setSelectionMode(QAbstractItemView.NoSelection)
+        # Banding comes from the list, not the row widgets: an item widget sits
+        # on the viewport and the item's background is drawn over it.
+        self.repo_list.setAlternatingRowColors(True)
         root.addWidget(self.repo_list, stretch=1)
 
         # ── Commit message ─────────────────────────────────────────
