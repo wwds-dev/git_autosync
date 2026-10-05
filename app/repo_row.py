@@ -18,7 +18,9 @@ _BADGE = {
 ROW_MARGINS = (8, 6, 10, 6)
 ROW_SPACING = 8
 CHECK_W = 20
-TIME_W  = 96   # fits the 'LAST SYNCED' heading; see tests/test_header_fit.py
+TIME_W  = 96   # fits the 'LAST COMMIT' heading; see tests/test_header_fit.py
+NAME_W  = 320  # the name column is fixed, so the actions sit just after it
+               # instead of being flung to the far edge of a wide window
 BADGE_W = 88
 
 _TIME_STYLE  = "color:#6E6E73; font-size:11px;"
@@ -67,8 +69,9 @@ class RepoRow(QWidget):
         self.label.setTextFormat(Qt.RichText)
         self.label.setText(self._name_markup(name))
         self.label.setToolTip(name)
-        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        layout.addWidget(self.label, stretch=1)
+        self.label.setFixedWidth(NAME_W)
+        self.label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        layout.addWidget(self.label)
 
         # Last-synced time (subtle, always shown when known)
         self.time_label = QLabel()
@@ -131,6 +134,10 @@ class RepoRow(QWidget):
             layout.addWidget(self.allowlist_btn)
         else:
             self.allowlist_btn = None
+
+        # Slack goes here, after the actions — so the whole table packs to the
+        # left and the name stays next to its own buttons on a wide window.
+        layout.addStretch(1)
 
     @staticmethod
     def _name_markup(entry: str) -> str:

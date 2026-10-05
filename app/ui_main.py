@@ -130,8 +130,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"git_autosync {version.version_string()}")
-        self.setMinimumSize(700, 500)
-        self.resize(860, 700)
+        # The columns are fixed, so below this the actions clip rather than
+        # reflow — the table needs ~870px plus margins.
+        self.setMinimumSize(900, 480)
+        # Sized to the table rather than the screen: the columns are fixed, so a
+        # wider window only adds empty space to the right of the actions.
+        self.resize(1000, 660)
 
         self.config_path = paths.user_config_path()
         self.runner = AutosyncRunner(self)
@@ -461,16 +465,15 @@ class MainWindow(QMainWindow):
         self.select_all_box.clicked.connect(self._on_select_all_clicked)
         lay.addWidget(self.select_all_box)
 
-        name = cell("Repository")
-        name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        lay.addWidget(name, stretch=1)
+        lay.addWidget(cell("Repository", repo_row.NAME_W))
         lay.addWidget(cell("Last commit", repo_row.TIME_W,
                            Qt.AlignRight | Qt.AlignVCenter))
         lay.addWidget(cell("Status", repo_row.BADGE_W, Qt.AlignCenter))
         # Width is set from a real row once one exists — the button cluster's
         # size depends on which buttons that row has.
-        self._header_actions = cell("Actions", 1, Qt.AlignRight | Qt.AlignVCenter)
+        self._header_actions = cell("Actions", 1, Qt.AlignLeft | Qt.AlignVCenter)
         lay.addWidget(self._header_actions)
+        lay.addStretch(1)
 
         header.setStyleSheet(
             "#listHeader { background:#F5F5F7; border:1px solid #E5E5EA;"
@@ -512,9 +515,13 @@ class MainWindow(QMainWindow):
         row = max(rows, key=lambda r: r.width())
         if row.width() <= 0:
             return
-        right_of_badge = row.width() - (row.badge.x() + row.badge.width())
-        actions_w = max(1, right_of_badge - repo_row.ROW_SPACING
-                        - repo_row.ROW_MARGINS[2])
+        buttons = [b for b in (row.dry_run_btn, row.sync_btn, row.publish_btn,
+                               row.privacy_btn, row.ignore_btn) if b and b.isVisible()]
+        if not buttons:
+            return
+        left = min(b.x() for b in buttons)
+        right = max(b.x() + b.width() for b in buttons)
+        actions_w = max(1, right - left)
         self._header_actions.setFixedWidth(actions_w)
         # The list has a frame and may show a scrollbar; match that inset so
         # the header's right edge lands where the rows' does.
