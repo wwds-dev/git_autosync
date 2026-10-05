@@ -400,6 +400,7 @@ class MainWindow(QMainWindow):
             self.repo_list.addItem(item)
             self.repo_list.setItemWidget(item, row)
             self._row_widgets[name] = row
+            row.set_stripe(len(self._row_widgets) % 2 == 0)  # row is already counted
             if not paths.repo_exists(name):
                 row.set_missing(True)
             row.checkbox.toggled.connect(self._refresh_select_all_box)
@@ -798,6 +799,7 @@ class MainWindow(QMainWindow):
                     status = "PENDING"
                 row.set_status(status)
                 row.set_blocked(info["status"] == "BLOCKED")
+                row.set_detail(detail or None)
             if not row.is_missing():
                 self._apply_time(row, name)
 
@@ -840,7 +842,16 @@ class MainWindow(QMainWindow):
                 "background:#FFE5E3; color:#C0392B; padding:8px 12px;"
                 " border:1px solid #FFCDD2; border-radius:8px;"
             )
-            text = "⚠  Some repos were blocked or errored.  " + text
+            problems = [f"{n}: {i.get('detail') or i['status'].lower()}"
+                        for n, i in summary["repos"].items()
+                        if i["status"] in ("ERROR", "BLOCKED")]
+            if problems:
+                shown = "; ".join(problems[:3])
+                if len(problems) > 3:
+                    shown += f"; +{len(problems) - 3} more"
+                text = f"⚠  {shown}  —  " + text
+            else:
+                text = "⚠  Some repos were blocked or errored.  " + text
         else:
             self.summary_label.setStyleSheet(
                 "background:#D1F2DC; color:#1A7A3A; padding:8px 12px;"

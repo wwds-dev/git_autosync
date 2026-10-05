@@ -26,6 +26,9 @@ _STALE_STYLE = "background:#FFF8E7; color:#92400E; border-radius:5px; padding:2p
 _EMPTY_STYLE = "background:transparent;"
 
 
+_STRIPE_BG = "#FAFAFC"   # every other row, so a wide row stays readable
+
+
 class RepoRow(QWidget):
     def __init__(self, name: str, on_dry_run, on_sync, on_publish=None, on_privacy=None,
              on_ignore=None, on_allowlist=None, on_remove=None):
@@ -196,6 +199,20 @@ class RepoRow(QWidget):
 
     def is_missing(self) -> bool:
         return self._missing
+
+    def set_stripe(self, odd: bool):
+        """Tint alternate rows. At this width the name and its buttons are far
+        enough apart that an unbroken white field is hard to track across."""
+        self.setAutoFillBackground(True)
+        self.setStyleSheet(
+            f"RepoRow {{ background: {_STRIPE_BG}; }}" if odd
+            else "RepoRow { background: transparent; }")
+
+    def set_detail(self, text: str | None):
+        """Hover text explaining a status — why a sync errored or was blocked."""
+        tip = text or ""
+        for w in (self, self.label, self.badge):
+            w.setToolTip(tip)
 
     def set_missing(self, missing: bool):
         """Entry no longer resolves to a repo on disk — say so and disable it.

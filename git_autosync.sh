@@ -128,7 +128,7 @@ N_SYNCED=0; N_BLOCKED=0; N_SKIP=0; N_NOOP=0; N_ERR=0
 process_repo(){
   local entry="$1"
   local mode="${2:-sweep}"
-  local dir name label branch rc needs_create=0
+  local dir name label branch rc needs_create=0 push_out push_rc reason behind
   dir="$(resolve_repo "$entry")"
   # label identifies the repo everywhere it is reported: it is the config entry
   # verbatim, so the GUI (which keys its rows by config entry) can match. name
@@ -200,9 +200,14 @@ process_repo(){
   # Commits made but not yet pushed. A real run pushes these regardless, but
   # without counting them a dry-run reports "nothing to commit" and the GUI
   # badges the repo Clean while a push is still pending.
-  ahead=0
+  ahead=0; behind=0
   if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    # Fetch first: without it @{u} is whatever was last seen locally, so a
+    # remote that moved on looks like "nothing to do" right up until the push
+    # is rejected with "fetch first".
+    git fetch -q origin 2>/dev/null || true
     ahead="$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
+    behind="$(git rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)"
   fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -284,8 +289,37 @@ process_repo(){
 
   # ---- push (covers new commit AND any earlier unpushed commits) ----
   if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-    if git push >>"$LOG" 2>&1; then log "  pushed to origin/$branch."; SUMMARY+=("SYNCED  $label"); N_SYNCED=$((N_SYNCED+1))
-    else log "  ERROR: push failed (see log)."; SUMMARY+=("ERROR   $label  (push failed)"); N_ERR=$((N_ERR+1)); fi
+    push_out="$(git push 2>&1)"; push_rc=$?
+    printf '%s\n' "$push_out" >>"$LOG"
+    if [ $push_rc -eq 0 ]; then
+      if [ "${behind:-0}" -gt 0 ]; then
+        # Nothing was wrong locally, but the remote is ahead and this tool
+        # never pulls — say so rather than reporting a clean sync.
+        log "  pushed to origin/$branch; remote is $behind commit(s) ahead of you (run git pull)."
+        SUMMARY+=("SYNCED  $label  (behind remote by $behind - run git pull)")
+      else
+        log "  pushed to origin/$branch."; SUMMARY+=("SYNCED  $label")
+      fi
+      N_SYNCED=$((N_SYNCED+1))
+    else
+      # Name the cause. "push failed" sent the user to a log they had to read
+      # themselves; these are the cases that actually happen.
+      case "$push_out" in
+        *"fetch first"*|*"non-fast-forward"*|*"behind its remote"*)
+          reason="remote has ${behind:-newer} commit(s) you do not have — pull first" ;;
+        *"Authentication failed"*|*"could not read Username"*|*"Permission denied"*|*"403"*)
+          reason="not authorised to push — check gh auth / credentials" ;;
+        *"Could not resolve host"*|*"Operation timed out"*|*"Connection reset"*|*"RPC failed"*)
+          reason="network problem reaching GitHub — transient, try again" ;;
+        *"Repository not found"*|*"does not appear to be a git repository"*)
+          reason="remote repo not found — renamed, deleted, or wrong URL" ;;
+        *"protected branch"*|*"pre-receive hook declined"*)
+          reason="rejected by a branch protection rule on GitHub" ;;
+        *) reason="push failed — see log" ;;
+      esac
+      log "  ERROR: $reason"
+      SUMMARY+=("ERROR   $label  ($reason)"); N_ERR=$((N_ERR+1))
+    fi
   else
     if git push -u origin "$branch" >>"$LOG" 2>&1; then log "  pushed & set upstream origin/$branch."; SUMMARY+=("SYNCED  $label"); N_SYNCED=$((N_SYNCED+1))
     else log "  ERROR: push failed (see log)."; SUMMARY+=("ERROR   $label  (push failed)"); N_ERR=$((N_ERR+1)); fi
