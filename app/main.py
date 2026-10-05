@@ -105,7 +105,12 @@ def main():
     window = MainWindow()
     app._window = window
 
-    if not background:
+    if background:
+        # Started at login: live in the menu bar only. Without this the app is
+        # still a Regular app, so it keeps a Dock tile and macOS can bring it
+        # forward during login even though no window was shown.
+        set_dock_icon_visible(False)
+    else:
         window.show()
 
     def _on_new_connection():

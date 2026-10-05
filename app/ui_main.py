@@ -34,7 +34,7 @@ from . import config, leak_triage, login_item, paths, repo_state, scheduler, ver
 from .create_repo_dialog import CreateRepoDialog
 from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
-from .macos_dock import activate_app, set_dock_icon_visible
+from .macos_dock import set_dock_icon_visible
 from . import repo_row
 from .repo_row import RepoRow
 from .rescan_dialog import RescanDialog, plan_changes
@@ -1238,12 +1238,15 @@ class MainWindow(QMainWindow):
         if menu is None or self._tray is None:
             return
         try:
-            # Activate first: an inactive app's first click activates it instead
-            # of hitting the item, so Quit would highlight and never fire.
-            activate_app()
             # exec(), not popup(): exec runs the menu's own event loop and grabs
             # input, so the click that selects an item is actually delivered.
             # Safe here because this already runs a turn after AppKit's dispatch.
+            #
+            # Deliberately NOT activating the app first. Activating delivers the
+            # click too, but it raises the whole app: ApplicationActivate wakes
+            # _DockActivateFilter, which un-hides the window. Clicking the menu
+            # bar icon should show the menu and nothing else — only "Open
+            # git_autosync" brings the window forward.
             menu.exec(QCursor.pos())
         except Exception as exc:          # never let the tray take the app down
             print(f"tray menu failed to open: {exc}")
