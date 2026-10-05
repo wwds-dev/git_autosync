@@ -14,6 +14,34 @@ QMainWindow, QDialog {{
     background: #F5F5F7;
 }}
 
+/* ── Menus ──────────────────────────────────────────────────── */
+/* The global QWidget rule paints near-black text on every widget. A popup
+   menu is drawn on the system surface, which is dark in Dark Mode, so the
+   text disappeared into it. This app is light-themed throughout, so the menu
+   paints its own surface instead of inheriting the system's. */
+QMenu {{
+    background: #FFFFFF;
+    color: #1D1D1F;
+    border: 1px solid #D1D1D6;
+    border-radius: 8px;
+    padding: 4px;
+}}
+QMenu::item {{
+    padding: 6px 24px 6px 14px;
+    border-radius: 5px;
+    color: #1D1D1F;
+}}
+QMenu::item:selected {{
+    background: {ACCENT};
+    color: #FFFFFF;
+}}
+QMenu::item:disabled {{ color: #AEAEB2; }}
+QMenu::separator {{
+    height: 1px;
+    background: #E5E5EA;
+    margin: 5px 10px;
+}}
+
 /* ── Scrollbars ─────────────────────────────────────────────── */
 QScrollBar:vertical {{
     background: transparent;
