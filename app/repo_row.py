@@ -33,7 +33,7 @@ _STRIPE_BG = "#EFEFF4"   # ~6% below white: visible as a band, still quiet
 
 class RepoRow(QWidget):
     def __init__(self, name: str, on_dry_run, on_sync, on_publish=None, on_privacy=None,
-             on_ignore=None, on_allowlist=None, on_remove=None):
+             on_ignore=None, on_allowlist=None, on_remove=None, on_pull=None):
         super().__init__()
         self.name = name
         self._status = None
@@ -124,6 +124,18 @@ class RepoRow(QWidget):
             layout.addWidget(self.ignore_btn)
         else:
             self.ignore_btn = None
+
+        # Shown only when the repo is behind its remote, which is the one
+        # failure the user cannot clear from this app otherwise.
+        self.pull_btn = QPushButton("Pull")
+        self.pull_btn.setProperty("class", "rowButton")
+        self.pull_btn.setToolTip(
+            "Fetch and fast-forward this repo to its remote, so the next sync "
+            "can push. Never discards local work.")
+        self.pull_btn.setVisible(False)
+        if on_pull is not None:
+            self.pull_btn.clicked.connect(lambda: on_pull(name))
+        layout.addWidget(self.pull_btn)
 
         if on_allowlist is not None:
             self.allowlist_btn = QPushButton("Allowlist")
@@ -254,6 +266,18 @@ class RepoRow(QWidget):
             self.setToolTip("")
             self.checkbox.setEnabled(True)
 
+    def set_behind(self, behind: bool):
+        """Offer the fix next to the problem, rather than only naming it."""
+        self.pull_btn.setVisible(behind)
+        if behind:
+            self.pull_btn.setStyleSheet(
+                "QPushButton { color:#92400E; background:#FFF8E7;"
+                " border:1px solid #F0D9A8; border-radius:5px;"
+                " padding:3px 9px; font-size:11px; font-weight:700; }"
+                "QPushButton:hover { background:#FDEFD0; }")
+        else:
+            self.pull_btn.setStyleSheet("")
+
     def set_blocked(self, blocked: bool):
         """Show the Allowlist button and colour Fix leak… red when a leak is active."""
         if self.allowlist_btn:
@@ -276,6 +300,7 @@ class RepoRow(QWidget):
         if self.privacy_btn: self.privacy_btn.setEnabled(enabled)
         if self.ignore_btn:     self.ignore_btn.setEnabled(enabled)
         if self.remove_btn:     self.remove_btn.setEnabled(enabled or self._missing)
+        if self.pull_btn:       self.pull_btn.setEnabled(enabled)
         if self.allowlist_btn:  self.allowlist_btn.setEnabled(enabled)
 
     def set_tooltips(self, enabled: bool):

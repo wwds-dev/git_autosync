@@ -224,7 +224,13 @@ process_repo(){
         SUMMARY+=("OK      $label  (dry-run: nothing to push)")
       fi
     elif git diff --cached --quiet; then
-      if [ "$ahead" -gt 0 ]; then
+      if [ "${behind:-0}" -gt 0 ]; then
+        # A dry-run that ignores this reports "safe" and the real sync is then
+        # rejected with "fetch first" — exactly the surprise it exists to stop.
+        log "  DRY-RUN: behind remote by $behind commit(s) — a push would be REJECTED. Pull first."
+        SUMMARY+=("ERROR   $label  (dry-run: behind remote by $behind - pull first)")
+        N_ERR=$((N_ERR+1)); git reset -q 2>/dev/null; return
+      elif [ "$ahead" -gt 0 ]; then
         log "  DRY-RUN: no file changes, but $ahead unpushed commit(s) would be pushed:"
         git log --oneline '@{u}..HEAD' | sed 's/^/      /' | tee -a "$LOG"
         SUMMARY+=("OK      $label  (dry-run: would push $ahead unpushed commit(s))")
@@ -237,6 +243,11 @@ process_repo(){
       git diff --cached --name-status | sed 's/^/      /' | tee -a "$LOG"
       if [ "$ahead" -gt 0 ]; then
         log "      (plus $ahead earlier unpushed commit(s))"
+      fi
+      if [ "${behind:-0}" -gt 0 ]; then
+        log "      WARNING: behind remote by $behind commit(s) — the push would be rejected. Pull first."
+        SUMMARY+=("ERROR   $label  (dry-run: behind remote by $behind - pull first)")
+        N_ERR=$((N_ERR+1)); git reset -q 2>/dev/null; return
       fi
       SUMMARY+=("OK      $label  (dry-run: would sync)")
     fi

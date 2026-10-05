@@ -396,7 +396,8 @@ class MainWindow(QMainWindow):
                           on_publish=publish_cb, on_privacy=privacy_cb,
                           on_ignore=self._on_open_ignore,
                           on_allowlist=self._on_allowlist_single,
-                          on_remove=self._on_remove_entry)
+                          on_remove=self._on_remove_entry,
+                          on_pull=self._on_pull)
             self._apply_time(row, name)
             item = QListWidgetItem()
             # Width 0 lets the item span the viewport instead of stopping at the
@@ -590,6 +591,46 @@ class MainWindow(QMainWindow):
         else:
             box.setCheckState(Qt.PartiallyChecked)
         box.blockSignals(False)
+
+    def _on_pull(self, name: str):
+        """Fast-forward a repo that is behind, so the next sync can push.
+
+        --ff-only on purpose: it either moves the branch forward cleanly or
+        refuses. A merge or rebase here could leave conflicts in a repo the
+        user was not even looking at.
+        """
+        git = paths.find_git() or "git"
+        path = paths.resolve_entry(name)
+        try:
+            fetch = subprocess.run([git, "-C", str(path), "fetch", "origin"],
+                                   capture_output=True, text=True, timeout=120)
+            r = subprocess.run([git, "-C", str(path), "pull", "--ff-only"],
+                               capture_output=True, text=True, timeout=120)
+        except Exception as exc:
+            QMessageBox.warning(self, "Pull failed", f"{name}\n\n{exc}")
+            return
+
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode == 0:
+            QMessageBox.information(
+                self, "Up to date",
+                f"'{name}' is now level with its remote.\n\n{out[-500:]}")
+            self._append_output(f"Pulled {name}: fast-forwarded.\n")
+            self._reload_repo_list()
+            return
+
+        # ff-only refuses when both sides have commits. That needs a decision
+        # this app should not make silently.
+        ahead = subprocess.run([git, "-C", str(path), "rev-list", "--count", "@{u}..HEAD"],
+                               capture_output=True, text=True).stdout.strip() or "?"
+        QMessageBox.warning(
+            self, "Cannot fast-forward",
+            f"'{name}' has diverged: {ahead} local commit(s) the remote does not "
+            f"have, and commits on the remote you do not have. A fast-forward "
+            f"would lose one side, so nothing was changed.\n\n"
+            f"Resolve it yourself, in that repo:\n"
+            f"    git -C \"{path}\" pull --rebase\n\n"
+            f"git said:\n{out[-500:]}")
 
     def _on_remove_entry(self, name: str):
         """Drop one entry from the list. Touches the list only."""
@@ -810,6 +851,7 @@ class MainWindow(QMainWindow):
                 row.set_status(status)
                 row.set_blocked(info["status"] == "BLOCKED")
                 row.set_detail(detail or None)
+                row.set_behind("pull first" in detail or "behind remote" in detail)
             if not row.is_missing():
                 self._apply_time(row, name)
 

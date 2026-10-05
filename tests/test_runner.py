@@ -228,3 +228,17 @@ def test_behind_remote_is_reported_even_on_a_successful_push():
     info = parse_summary(text)["repos"]["lab_hub"]
     assert info["status"] == "SYNCED"
     assert "behind remote by 3" in info["detail"]
+
+
+def test_dry_run_reports_being_behind_as_an_error():
+    """A dry-run that ignores the remote reports 'safe' and the real sync is
+    then rejected with 'fetch first' — the exact surprise it exists to stop."""
+    text = (
+        "2026-10-06 00:42:43 | SUMMARY:\n"
+        "2026-10-06 00:42:43 |    ERROR   sentinel_fork  (dry-run: behind remote "
+        "by 6 - pull first)\n"
+        "2026-10-06 00:42:43 | synced=0 blocked=0 skipped=0 errors=1 noop=0\n"
+    )
+    info = parse_summary(text)["repos"]["sentinel_fork"]
+    assert info["status"] == "ERROR"
+    assert "pull first" in info["detail"]
