@@ -94,3 +94,23 @@ def test_repo_rows_are_actually_banded_on_screen(window):
 
     first, second = band(0), band(1)
     assert first != second, f"rows are not banded: both {first}"
+
+
+def test_behind_state_survives_a_row_rebuild(window):
+    """Pulling one repo rebuilt every row, which cleared every other Pull
+    button and forced another dry-run just to get them back."""
+    app = QtWidgets.QApplication.instance()
+    names = list(window._row_widgets)[:3]
+    if len(names) < 3:
+        pytest.skip("needs at least three repos")
+    for n in names:
+        window._behind.add(n)
+        window._row_widgets[n].set_behind(True)
+
+    window._reload_repo_list()
+    for _ in range(4):
+        app.processEvents()
+
+    still = [n for n in names
+             if n in window._row_widgets and window._row_widgets[n].pull_btn.isVisible()]
+    assert len(still) == len(names), f"lost Pull on {set(names) - set(still)}"

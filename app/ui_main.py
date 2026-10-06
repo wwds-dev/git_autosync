@@ -146,6 +146,10 @@ class MainWindow(QMainWindow):
         self._current_single_repo = None
         self._row_widgets: dict[str, RepoRow] = {}
         self._last_findings: dict[str, dict] = {}
+        # Repos known to be behind their remote. Held here because
+        # _reload_repo_list rebuilds every row, and rebuilding used to
+        # clear every other Pull button after one pull.
+        self._behind: set[str] = set()
         self._tray_hint_shown = False
 
         self._build_ui()
@@ -288,6 +292,20 @@ class MainWindow(QMainWindow):
 
         # Cmd+Q and the Dock's Quit deliberately only hide to the menu bar, so
         # without this the only real exit is a menu the user has to know about.
+        self.pull_selected_btn = QPushButton("Pull selected")
+        self.pull_selected_btn.setToolTip(
+            "Fast-forward every ticked repo that is behind its remote. "
+            "Skips repos that are level, and refuses any that have diverged.")
+        self.pull_selected_btn.clicked.connect(self._on_pull_selected)
+        secondary_row.addWidget(self.pull_selected_btn)
+
+        self.privacy_selected_btn = QPushButton("Privacy…")
+        self.privacy_selected_btn.setToolTip(
+            "Change public/private on every ticked repo, after confirming the "
+            "list and the direction.")
+        self.privacy_selected_btn.clicked.connect(self._on_privacy_selected)
+        secondary_row.addWidget(self.privacy_selected_btn)
+
         self.hide_btn = QPushButton("Hide to menu bar")
         self.hide_btn.setToolTip(
             "Close this window. Scheduled syncs keep running; the menu bar "
@@ -409,6 +427,7 @@ class MainWindow(QMainWindow):
             self.repo_list.setItemWidget(item, row)
             self._row_widgets[name] = row
             row.set_stripe(len(self._row_widgets) % 2 == 0)  # row is already counted
+            row.set_behind(name in self._behind)
             if not paths.repo_exists(name):
                 row.set_missing(True)
             row.checkbox.toggled.connect(self._refresh_select_all_box)
@@ -592,6 +611,100 @@ class MainWindow(QMainWindow):
             box.setCheckState(Qt.PartiallyChecked)
         box.blockSignals(False)
 
+    def _on_pull_selected(self):
+        """Pull every ticked repo that is actually behind."""
+        targets = [n for n in self._checked_repos() if n in self._behind]
+        if not targets:
+            QMessageBox.information(
+                self, "Nothing to pull",
+                "None of the ticked repos is known to be behind its remote.\n\n"
+                "Run Dry-run first — that is what checks the remotes.")
+            return
+        if QMessageBox.question(
+            self, "Pull selected",
+            "Fast-forward these repos to their remotes?\n\n  "
+            + "\n  ".join(targets)
+            + "\n\nNothing local is discarded; a repo that has diverged is "
+              "reported and left alone.",
+            QMessageBox.Cancel | QMessageBox.Yes, QMessageBox.Yes,
+        ) != QMessageBox.Yes:
+            return
+        done, refused = [], []
+        for name in targets:
+            ok, message = self._pull_one(name)
+            (done if ok else refused).append(f"{name}: {message}")
+        report = ""
+        if done:
+            report += "Fast-forwarded:\n  " + "\n  ".join(done)
+        if refused:
+            report += ("\n\n" if report else "") + "Left alone:\n  " + "\n  ".join(refused)
+        self._append_output(report + "\n")
+        QMessageBox.information(self, "Pull selected", report)
+
+    def _on_privacy_selected(self):
+        """Flip visibility on every ticked repo, in one confirmed step."""
+        targets = [n for n, r in self._row_widgets.items()
+                   if r.is_checked() and not r.is_missing() and r.privacy_btn]
+        if not targets:
+            QMessageBox.information(self, "Nothing selected",
+                                    "Tick the repos whose visibility you want to change.")
+            return
+        choice = QMessageBox.question(
+            self, "Change visibility",
+            f"Make these {len(targets)} repo(s) PRIVATE?\n\n  "
+            + "\n  ".join(targets)
+            + "\n\nYes = private,  No = public,  Cancel = leave them alone.",
+            QMessageBox.Cancel | QMessageBox.No | QMessageBox.Yes, QMessageBox.Cancel)
+        if choice == QMessageBox.Cancel:
+            return
+        target = "private" if choice == QMessageBox.Yes else "public"
+        gh = paths.find_gh()
+        if not gh:
+            QMessageBox.warning(self, "gh not found", "Install the GitHub CLI first.")
+            return
+        lines = []
+        for name in targets:
+            slug = paths.repo_slug(name)
+            if not slug:
+                lines.append(f"{name}: no GitHub remote — skipped")
+                continue
+            r = subprocess.run(
+                [gh, "repo", "edit", slug, "--visibility", target,
+                 "--accept-visibility-change-consequences"],
+                capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                lines.append(f"{name}: now {target}")
+                row = self._row_widgets.get(name)
+                if row:
+                    row.set_visibility(target == "private")
+            else:
+                lines.append(f"{name}: FAILED — {r.stderr.strip()[:80]}")
+        report = "\n  ".join(lines)
+        self._append_output("Visibility:\n  " + report + "\n")
+        QMessageBox.information(self, "Visibility", "  " + report)
+
+    def _pull_one(self, name: str) -> tuple[bool, str]:
+        """fetch + pull --ff-only for one repo. Returns (succeeded, message)."""
+        git = paths.find_git() or "git"
+        path = paths.resolve_entry(name)
+        try:
+            subprocess.run([git, "-C", str(path), "fetch", "origin"],
+                           capture_output=True, text=True, timeout=120)
+            r = subprocess.run([git, "-C", str(path), "pull", "--ff-only"],
+                               capture_output=True, text=True, timeout=120)
+        except Exception as exc:
+            return False, f"{exc}"
+        if r.returncode == 0:
+            self._behind.discard(name)
+            row = self._row_widgets.get(name)
+            if row:
+                row.set_behind(False)
+                self._apply_time(row, name)
+            return True, "up to date"
+        ahead = subprocess.run([git, "-C", str(path), "rev-list", "--count", "@{u}..HEAD"],
+                               capture_output=True, text=True).stdout.strip() or "?"
+        return False, f"diverged ({ahead} local commit(s)) — needs git pull --rebase"
+
     def _on_pull(self, name: str):
         """Fast-forward a repo that is behind, so the next sync can push.
 
@@ -616,7 +729,12 @@ class MainWindow(QMainWindow):
                 self, "Up to date",
                 f"'{name}' is now level with its remote.\n\n{out[-500:]}")
             self._append_output(f"Pulled {name}: fast-forwarded.\n")
-            self._reload_repo_list()
+            self._behind.discard(name)
+            row = self._row_widgets.get(name)
+            if row:
+                row.set_behind(False)
+                row.set_status("SYNCED")
+                self._apply_time(row, name)
             return
 
         # ff-only refuses when both sides have commits. That needs a decision
@@ -851,7 +969,11 @@ class MainWindow(QMainWindow):
                 row.set_status(status)
                 row.set_blocked(info["status"] == "BLOCKED")
                 row.set_detail(detail or None)
-                row.set_behind("pull first" in detail or "behind remote" in detail)
+                if "pull first" in detail or "behind remote" in detail:
+                    self._behind.add(name)
+                else:
+                    self._behind.discard(name)
+                row.set_behind(name in self._behind)
             if not row.is_missing():
                 self._apply_time(row, name)
 
