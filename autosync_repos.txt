@@ -24,7 +24,7 @@
 backup_manager
 toolbox/convert_epub
 toolbox/image_tools
-sentinel_fork/vpn_agent
+sentinel/vpn_agent
 git_autosync        # this tool itself (synced once it has a GitHub remote)
 
 # 'imprint' and 'imprint/vidforge' are listed in the live config with

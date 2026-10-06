@@ -348,7 +348,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   flags=" ${line#"$entry"} "
   mode="sweep"
   case "$flags" in *" push-only "*) mode="push-only" ;; esac
-  # --repo accepts the config entry ("sentinel_fork/vpn_agent") or its bare
+  # --repo accepts the config entry ("sentinel/vpn_agent") or its bare
   # name ("vpn_agent"); the GUI sends the entry, a human usually sends the name.
   if [ -n "$ONLY" ] && [ "$entry" != "$ONLY" ] \
      && [ "$(basename "$(resolve_repo "$entry")")" != "$ONLY" ]; then continue; fi

@@ -3,7 +3,7 @@ from app.rescan_dialog import plan_changes, _relocate_candidate
 
 DISCOVERED = [
     "backup_manager", "bazaar", "git_autosync", "imprint", "imprint/vidforge",
-    "toolbox", "toolbox/convert_epub", "sentinel_fork/vpn_agent",
+    "toolbox", "toolbox/convert_epub", "sentinel/vpn_agent",
 ]
 
 

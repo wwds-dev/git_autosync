@@ -119,7 +119,7 @@ def has_remote(entry: str) -> bool:
 def repos_without_remote() -> list[Path]:
     """Git repos under lab_active_dir() that have no 'origin' remote configured —
     candidates for the "Create GitHub repo" flow. Recurses, so nested repos
-    (imprint/vidforge, sentinel_fork/vpn_agent, toolbox/*) are seen too."""
+    (imprint/vidforge, sentinel/vpn_agent, toolbox/*) are seen too."""
     base = lab_active_dir()
     return [base / rel for rel in discover_repos() if not has_remote(rel)]
 

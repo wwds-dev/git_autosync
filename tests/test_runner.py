@@ -196,12 +196,12 @@ def test_summary_keys_are_config_entries_not_basenames():
     Reporting the basename made every nested repo read back as 'never synced'."""
     text = (
         "2026-09-09 20:06:06 | SUMMARY:\n"
-        "2026-09-09 20:06:06 |    SYNCED  sentinel_fork/agents/chat_agent\n"
+        "2026-09-09 20:06:06 |    SYNCED  sentinel/agents/chat_agent\n"
         "2026-09-09 20:06:06 |    SYNCED  sonar/sonar/macro\n"
         "2026-09-09 20:06:06 | synced=2 blocked=0 skipped=0 errors=0 noop=0\n"
     )
     repos = parse_summary(text)["repos"]
-    assert "sentinel_fork/agents/chat_agent" in repos
+    assert "sentinel/agents/chat_agent" in repos
     assert "sonar/sonar/macro" in repos
     assert repos["sonar/sonar/macro"]["status"] == "SYNCED"
 
@@ -210,11 +210,11 @@ def test_push_rejection_reason_is_carried_into_the_summary():
     """'push failed' sent the user to a log; the cause belongs in the summary."""
     text = (
         "2026-10-05 23:20:11 | SUMMARY:\n"
-        "2026-10-05 23:20:11 |    ERROR   sentinel_fork  (remote has 6 commit(s) "
+        "2026-10-05 23:20:11 |    ERROR   sentinel  (remote has 6 commit(s) "
         "you do not have - pull first)\n"
         "2026-10-05 23:20:11 | synced=0 blocked=0 skipped=0 errors=1 noop=0\n"
     )
-    info = parse_summary(text)["repos"]["sentinel_fork"]
+    info = parse_summary(text)["repos"]["sentinel"]
     assert info["status"] == "ERROR"
     assert "pull first" in info["detail"]
 
@@ -235,10 +235,10 @@ def test_dry_run_reports_being_behind_as_an_error():
     then rejected with 'fetch first' — the exact surprise it exists to stop."""
     text = (
         "2026-10-06 00:42:43 | SUMMARY:\n"
-        "2026-10-06 00:42:43 |    ERROR   sentinel_fork  (dry-run: behind remote "
+        "2026-10-06 00:42:43 |    ERROR   sentinel  (dry-run: behind remote "
         "by 6 - pull first)\n"
         "2026-10-06 00:42:43 | synced=0 blocked=0 skipped=0 errors=1 noop=0\n"
     )
-    info = parse_summary(text)["repos"]["sentinel_fork"]
+    info = parse_summary(text)["repos"]["sentinel"]
     assert info["status"] == "ERROR"
     assert "pull first" in info["detail"]

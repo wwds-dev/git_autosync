@@ -14,17 +14,17 @@
 - [ ] `P0` `security` `@me` **Rotate any credential that was ever committed.** Repos with secrets in history stay out of `autosync_repos.txt`; publishing one requires history cleanup first, and the credential should be rotated regardless of what GitHub sees.
 - [ ] `P1` `infra` `@me` **Coverage has fallen far behind the repo count.** The Sep 2026
   reorg left 21 repos under `active/`; `autosync_repos.txt` lists 5. Uncovered:
-  `lab_hub`, `imprint`, `imprint/vidforge`, `sentinel_fork`, `sentinel_fork/bug_spray`,
+  `lab_hub`, `imprint`, `imprint/vidforge`, `sentinel`, `sentinel/bug_spray`,
   `sonar`, `sonar/sonar/macro`, `sonar/sonar/playmaker`, `toolbox`,
-  `toolbox/unblock_tracker`, `bazaar`, and the five `sentinel_fork/agents/*` repos.
+  `toolbox/unblock_tracker`, `bazaar`, and the five `sentinel/agents/*` repos.
   Consequences already visible: **`imprint` is 30 commits ahead of its remote**,
-  `sentinel_fork/vpn_agent` 1, and `bug_spray` has uncommitted work.
+  `sentinel/vpn_agent` 1, and `bug_spray` has uncommitted work.
 - [ ] `P1` `infra` `@me` **Nine repos have no remote at all**, so nothing is backing them
-  up but the nightly Drive rsync: `bazaar`, `sentinel_fork/bug_spray`, `toolbox`,
-  `sonar/sonar/macro`, `sonar/sonar/playmaker`, and the five `sentinel_fork/agents/*`.
+  up but the nightly Drive rsync: `bazaar`, `sentinel/bug_spray`, `toolbox`,
+  `sonar/sonar/macro`, `sonar/sonar/playmaker`, and the five `sentinel/agents/*`.
   A repo without a remote cannot be autosynced — `--create-remote` is the way in.
 - [ ] `P2` `research` `@ai` Nested repos need a coverage rule. `toolbox/` is a repo that
-  *contains* three repos, and `sentinel_fork/` contains three more. Decide whether the
+  *contains* three repos, and `sentinel/` contains three more. Decide whether the
   parent, the children, or both belong in `autosync_repos.txt`, and make sure the
   parent's `.gitignore` keeps `git add -A` from turning a child into an embedded gitlink.
 - [ ] `P1` `security` `@me` Confirm `gitleaks` is installed (`brew install gitleaks`) — without it the leak gate is a stub, and the whole safety argument for autosync rests on it
