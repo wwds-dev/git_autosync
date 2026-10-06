@@ -44,14 +44,23 @@ class _App(QApplication):
 
 
 class _DockActivateFilter(QObject):
-    """Reopens the window when the macOS Dock icon is clicked while hidden."""
+    """Reopens the window when the macOS Dock icon is clicked while hidden.
+
+    Only while the app still has a Dock icon. Once the window is hidden to the
+    menu bar the app turns Accessory and has no Dock tile, so there is nothing
+    to click — but activation still happens, e.g. the moment the tray icon is
+    clicked. Acting on that re-opened the window behind the menu, which looked
+    like the red button had done nothing and like Quit merely fronted the app.
+    """
 
     def __init__(self, window: MainWindow):
         super().__init__()
         self._window = window
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.ApplicationActivate and not self._window.isVisible():
+        if (event.type() == QEvent.ApplicationActivate
+                and not self._window.isVisible()
+                and not getattr(self._window, "hidden_to_tray", False)):
             self._window.show()
             self._window.raise_()
             self._window.activateWindow()
@@ -119,6 +128,7 @@ def main():
         if bytes(conn.readAll()) == b"background":
             return
         set_dock_icon_visible(True)   # first: an accessory app can't take focus
+        window.hidden_to_tray = False
         window.show()
         window.raise_()
         window.activateWindow()

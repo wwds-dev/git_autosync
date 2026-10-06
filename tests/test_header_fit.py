@@ -114,3 +114,30 @@ def test_behind_state_survives_a_row_rebuild(window):
     still = [n for n in names
              if n in window._row_widgets and window._row_widgets[n].pull_btn.isVisible()]
     assert len(still) == len(names), f"lost Pull on {set(names) - set(still)}"
+
+
+def test_hiding_to_the_menu_bar_survives_activation(window):
+    """Clicking the tray icon activates the app. While the window was parked in
+    the menu bar, that re-opened it — so the red button looked inert and Quit
+    looked like it only fronted the app."""
+    from PySide6.QtCore import QEvent
+
+    app = QtWidgets.QApplication.instance()
+    window.show()
+    for _ in range(3):
+        app.processEvents()
+    window.close()
+    for _ in range(3):
+        app.processEvents()
+    assert not window.isVisible()
+    assert window.hidden_to_tray
+
+    for _ in range(3):
+        app.sendEvent(app, QEvent(QEvent.ApplicationActivate))
+        app.processEvents()
+    assert not window.isVisible(), "activation re-opened a window hidden to the tray"
+
+    window._tray_open()
+    for _ in range(3):
+        app.processEvents()
+    assert window.isVisible() and not window.hidden_to_tray

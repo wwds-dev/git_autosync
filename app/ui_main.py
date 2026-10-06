@@ -151,6 +151,9 @@ class MainWindow(QMainWindow):
         # clear every other Pull button after one pull.
         self._behind: set[str] = set()
         self._tray_hint_shown = False
+        # True while the window is parked in the menu bar. Activation
+        # must not undo that — clicking the tray icon activates the app.
+        self.hidden_to_tray = False
 
         self._build_ui()
         self._reload_repo_list()
@@ -1451,6 +1454,7 @@ class MainWindow(QMainWindow):
     def _tray_open(self):
         # First, or the raise below does nothing: an accessory app can't take
         # focus until its activation policy is back to Regular.
+        self.hidden_to_tray = False
         set_dock_icon_visible(True)
         self.show()
         self.raise_()
@@ -1520,6 +1524,7 @@ class MainWindow(QMainWindow):
             # process and its menu bar icon stay alive in the background.
             event.ignore()
             self.hide()
+            self.hidden_to_tray = True
             set_dock_icon_visible(False)
             self._show_tray_hint()
         else:
