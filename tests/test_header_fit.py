@@ -123,6 +123,15 @@ def test_hiding_to_the_menu_bar_survives_activation(window):
     from PySide6.QtCore import QEvent
 
     app = QtWidgets.QApplication.instance()
+    # Offscreen has no system tray, so MainWindow leaves _tray None and
+    # closeEvent takes the real-quit branch. Stub the one thing it asks.
+    class _Tray:
+        def isVisible(self):
+            return True
+        def showMessage(self, *a, **k):
+            pass
+    window._tray = _Tray()
+    window._tray_hint_shown = True
     window.show()
     for _ in range(3):
         app.processEvents()
@@ -141,3 +150,4 @@ def test_hiding_to_the_menu_bar_survives_activation(window):
     for _ in range(3):
         app.processEvents()
     assert window.isVisible() and not window.hidden_to_tray
+    window._tray = None
