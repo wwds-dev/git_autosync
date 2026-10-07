@@ -89,3 +89,40 @@ def test_uncommitted_branch_offers_no_history_button():
 
     text = _plain(lt.describe_block("imprint", FINDING, lt.UNCOMMITTED))
     assert "Remove from history" not in text
+
+
+# ── Allowlist entries must be readable ────────────────────────────
+
+def test_fingerprint_splits_into_judgeable_parts():
+    """A fingerprint shown whole is truncated mid-hash, hiding the file — the
+    one part that lets a user decide whether the entry is safe to keep."""
+    from app.leak_triage import parse_fingerprint
+
+    p = parse_fingerprint(
+        "9e85a0328e31013b92df17442b2a9b7d7733924e:tests/test_vpn_execution.py:"
+        "generic-api-key:17")
+    assert p["file"] == "tests/test_vpn_execution.py"
+    assert p["line"] == "17"
+    assert p["rule"] == "generic-api-key"
+    assert p["commit"].startswith("9e85a03")
+
+
+def test_path_containing_a_colon_still_splits_correctly():
+    """Split from the right: a path may contain a colon, the trailing three
+    fields never do."""
+    from app.leak_triage import parse_fingerprint
+
+    p = parse_fingerprint("abc123:weird:name/file.py:generic-api-key:9")
+    assert p["file"] == "weird:name/file.py"
+    assert p["line"] == "9"
+    assert p["rule"] == "generic-api-key"
+
+
+def test_malformed_entry_is_shown_rather_than_dropped():
+    """An unparseable line is still a line in the file; hiding it would make
+    the dialog disagree with .gitleaksignore."""
+    from app.leak_triage import parse_fingerprint
+
+    p = parse_fingerprint("not-a-fingerprint")
+    assert p["file"] == "not-a-fingerprint"
+    assert p["raw"] == "not-a-fingerprint"

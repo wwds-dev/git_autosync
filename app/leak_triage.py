@@ -48,6 +48,27 @@ def _git(repo: Path, *args: str, git: str = "git",
 
 # ── .gitleaksignore ───────────────────────────────────────────────
 
+def parse_fingerprint(fp: str) -> dict:
+    """Split a gitleaks fingerprint into its parts.
+
+    The format is <commit>:<file>:<rule>:<line>. Split from the right, because
+    a path may contain a colon while the three trailing fields never do. An
+    entry that does not match is returned whole under "file", so an unreadable
+    line is still shown rather than silently dropped.
+    """
+    # Commit first (a hash never contains a colon), then rule and line off the
+    # end. Everything between is the path, so a colon in a filename stays with
+    # the file instead of being absorbed into the commit.
+    head, sep, rest = fp.partition(":")
+    if not sep:
+        return {"commit": "", "file": fp, "rule": "", "line": "", "raw": fp}
+    tail = rest.rsplit(":", 2)
+    if len(tail) != 3 or not tail[2].isdigit():
+        return {"commit": "", "file": fp, "rule": "", "line": "", "raw": fp}
+    path, rule, line = tail
+    return {"commit": head, "file": path, "rule": rule, "line": line, "raw": fp}
+
+
 def ignore_entries(path: Path) -> list[str]:
     """Fingerprints in the file — comment and blank lines skipped."""
     if not path.exists():

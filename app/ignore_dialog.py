@@ -10,9 +10,10 @@ from pathlib import Path
 
 from . import leak_triage
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget,
-    QMessageBox, QPushButton, QVBoxLayout,
+    QAbstractItemView, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
+    QLabel, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
 )
 
 
@@ -20,7 +21,10 @@ class IgnoreDialog(QDialog):
     def __init__(self, parent, repo_dir: Path, finding: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle(f"Gitleaks ignore — {repo_dir.name}")
-        self.resize(560, 380)
+        # Wide enough for a path and a rule side by side: the single-column
+        # list truncated every entry mid-hash, so the file it referred to —
+        # the only part that lets you judge it — was never visible.
+        self.resize(820, 420)
         self._ignore_path = repo_dir / ".gitleaksignore"
         self._finding = finding
 
@@ -37,7 +41,16 @@ class IgnoreDialog(QDialog):
         info.setStyleSheet("color: #6E6E73; font-size: 12px;")
         layout.addWidget(info)
 
-        self.entry_list = QListWidget()
+        self.entry_list = QTreeWidget()
+        self.entry_list.setColumnCount(4)
+        self.entry_list.setHeaderLabels(["File", "Line", "Rule", "Commit"])
+        self.entry_list.setRootIsDecorated(False)
+        self.entry_list.setAlternatingRowColors(True)
+        self.entry_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        header = self.entry_list.header()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for col in (1, 2, 3):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         layout.addWidget(self.entry_list, stretch=1)
 
         row = QHBoxLayout()
@@ -52,8 +65,8 @@ class IgnoreDialog(QDialog):
         row.addWidget(self.remove_btn)
         layout.addLayout(row)
 
-        self.entry_list.currentRowChanged.connect(
-            lambda i: self.remove_btn.setEnabled(i >= 0)
+        self.entry_list.currentItemChanged.connect(
+            lambda cur, _prev: self.remove_btn.setEnabled(cur is not None)
         )
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -65,13 +78,24 @@ class IgnoreDialog(QDialog):
     def _load(self):
         self.entry_list.clear()
         for fp in leak_triage.ignore_entries(self._ignore_path):
-            self.entry_list.addItem(fp)
+            parts = leak_triage.parse_fingerprint(fp)
+            item = QTreeWidgetItem([
+                parts["file"],
+                parts["line"],
+                parts["rule"],
+                parts["commit"][:7],
+            ])
+            # The full fingerprint is what gets removed, and what the user may
+            # want to copy — keep it on the row rather than on screen.
+            item.setData(0, Qt.UserRole, fp)
+            item.setToolTip(0, fp)
+            self.entry_list.addTopLevelItem(item)
 
     def _add_finding(self):
         fp = self._finding["fingerprint"]
         # Check for duplicates
-        for i in range(self.entry_list.count()):
-            if self.entry_list.item(i).text() == fp:
+        for i in range(self.entry_list.topLevelItemCount()):
+            if self.entry_list.topLevelItem(i).data(0, Qt.UserRole) == fp:
                 QMessageBox.information(self, "Already ignored",
                                         "This fingerprint is already in the ignore list.")
                 return
@@ -84,14 +108,18 @@ class IgnoreDialog(QDialog):
         )
 
     def _remove_selected(self):
-        row = self.entry_list.currentRow()
-        if row < 0:
+        item = self.entry_list.currentItem()
+        if item is None:
             return
-        item = self.entry_list.item(row)
+        fp = item.data(0, Qt.UserRole)
+        parts = leak_triage.parse_fingerprint(fp)
+        where = parts["file"] + (f":{parts['line']}" if parts["line"] else "")
         reply = QMessageBox.question(
             self, "Remove entry",
-            f"Remove this fingerprint from the ignore list?\n\n{item.text()}"
+            f"Stop ignoring this finding?\n\n{where}\nrule {parts['rule']}\n\n"
+            "gitleaks will flag it again on the next scan, and the repo will be "
+            "blocked until it is dealt with."
         )
         if reply == QMessageBox.Yes:
-            leak_triage.remove_ignore_entry(self._ignore_path, item.text())
+            leak_triage.remove_ignore_entry(self._ignore_path, fp)
             self._load()
