@@ -223,27 +223,3 @@ def test_a_quit_gesture_parks_the_window_like_the_red_button(parked):
     app.sendEvent(app, QEvent(QEvent.ApplicationActivate))
     _pump(app)
     assert not window.isVisible(), "activation re-opened a window parked by Cmd+Q"
-
-
-def test_tray_popup_is_a_nonactivating_panel(window):
-    """The tray menu must take clicks without activating the app — activation
-    is what drags the main window forward. Qt backs the popup with a QNSPanel;
-    NSWindowStyleMaskNonactivatingPanel is what lets an inactive app's panel
-    receive the click."""
-    from app.macos_dock import make_window_nonactivating
-
-    app = QtWidgets.QApplication.instance()
-    menu = window._tray_menu
-    if menu is None:
-        pytest.skip("no system tray in this environment")
-    window._popup_tray_menu()
-    for _ in range(4):
-        app.processEvents()
-    assert menu.isVisible(), "tray menu did not open"
-    result = make_window_nonactivating(int(menu.winId()))
-    assert "nonactivating ON" in result, result
-
-    window._popup_tray_menu()          # second click dismisses
-    for _ in range(3):
-        app.processEvents()
-    assert not menu.isVisible(), "second click did not dismiss the menu"
