@@ -47,3 +47,45 @@ def test_worst_problems_come_first():
         "c": {"status": "BLOCKED", "detail": "secret"},
     })
     assert [a.repo for a in advices] == ["c", "b", "a"]
+
+
+# ── Leak triage wording ───────────────────────────────────────────
+
+def _plain(html: str) -> str:
+    import re
+    return re.sub(r"<[^>]+>", "", html).replace("&nbsp;", " ")
+
+
+FINDING = {"file": "services/database.py", "line": 198,
+           "rule": "generic-api-key", "fingerprint": "abc:f:generic-api-key:198"}
+
+
+def test_triage_branches_read_as_choices_not_contradictions():
+    """'• No — …' followed by '• Yes: …' read as two opposing statements about
+    the same finding. Each branch must be conditional and name its button."""
+    from app import leak_triage as lt
+
+    for where in (lt.UNCOMMITTED, lt.LOCAL, "published"):
+        text = _plain(lt.describe_block("imprint", FINDING, where))
+        assert "If it is NOT" in text, where
+        assert "If it IS" in text, where
+        assert "• No —" not in text and "• Yes:" not in text, where
+        assert "Allowlist (false positive)" in text, where
+
+
+def test_published_branch_puts_rotation_before_history_rewriting():
+    """Cleaning history does not make a leaked key safe, so rotation has to
+    come first and be unmistakable."""
+    from app import leak_triage as lt
+
+    text = _plain(lt.describe_block("imprint", FINDING, "published"))
+    assert text.index("Rotate or revoke") < text.index("Remove from history")
+
+
+def test_uncommitted_branch_offers_no_history_button():
+    """Nothing was committed, so there is no history to rewrite — the text must
+    not send the user to a button the dialog does not even show."""
+    from app import leak_triage as lt
+
+    text = _plain(lt.describe_block("imprint", FINDING, lt.UNCOMMITTED))
+    assert "Remove from history" not in text

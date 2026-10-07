@@ -110,33 +110,56 @@ def locate(repo: Path, finding: dict, git: str = "git") -> str:
 
 
 def describe_block(name: str, finding: dict, where: str) -> str:
-    """Rich-text explanation for the Fix leak… dialog."""
+    """Rich-text explanation for the Fix leak… dialog.
+
+    Each branch is phrased as a condition and names the button it leads to.
+    An earlier version put "No — …" and "Yes: …" as plain bullets, which read
+    as two contradictory statements rather than two choices, and the "Yes"
+    branch also mixed up two different questions: whether the value is a real
+    credential, and whether it has already been published.
+    """
     loc = finding.get("file", "?")
     if finding.get("line"):
         loc += f":{finding['line']}"
     rule = finding.get("rule") or "unknown rule"
+
     head = (
         f"<b>{name}</b> is blocked: gitleaks found something that looks like a "
         f"secret <b>{WHERE_TEXT[where]}</b>.<br>"
         f"<code>{loc}</code> &nbsp;·&nbsp; rule <code>{rule}</code><br><br>"
         "Nothing was committed or pushed for this repo. The block stays until "
-        "the finding is either removed or allowlisted, then a dry-run clears it."
-        "<br><br><b>Is it a real secret?</b><br>"
-        "• <b>No — false positive</b> (test dummy, example value, a name that "
-        "only looks like a key): allowlist it. That only edits "
-        f"<code>{name}/.gitleaksignore</code> locally and can be undone.<br>"
+        "the finding is removed or allowlisted; a dry-run then clears it."
+        "<br><br><b>Decide one thing: is the flagged value a real credential?</b>"
+        "<br><br>"
+        "<b>If it is NOT</b> — a test dummy, an example value, or a string that "
+        "only looks like a key (a SQL fragment, say):<br>"
+        "&nbsp;&nbsp;Choose <b>Allowlist (false positive)…</b>. That adds this "
+        f"one finding to <code>{name}/.gitleaksignore</code> on this Mac only, "
+        "and can be undone.<br><br>"
     )
+
     if where == UNCOMMITTED:
-        tail = ("• <b>Yes</b>: delete it from the file (move it to an env var or "
-                "keychain). It was never committed, so nothing else is needed.")
+        tail = (
+            "<b>If it IS a real credential</b>:<br>"
+            "&nbsp;&nbsp;Delete it from the file and read it from an environment "
+            "variable or the Keychain instead. It was never committed, so there "
+            "is no history to clean and no button to press here.")
     elif where == LOCAL:
-        tail = ("• <b>Yes</b>: it is only in commits on this Mac. Remove it from "
-                "history below — no force-push is needed, and the next sync "
-                "publishes the cleaned commits.")
+        tail = (
+            "<b>If it IS a real credential</b>:<br>"
+            "&nbsp;&nbsp;Choose <b>Remove from history…</b>. These commits exist "
+            "only on this Mac, so nothing has been exposed, no force-push is "
+            "needed, and the next sync publishes the cleaned history.")
     else:
-        tail = ("• <b>Yes</b>: it is already public. <b>Rotate or revoke the key "
-                "first</b> — anyone may have copied it. Then remove it from "
-                "history below; that force-pushes and cannot be undone on GitHub.")
+        tail = (
+            "<b>If it IS a real credential</b> — and this one is <b>already on "
+            "GitHub</b>:<br>"
+            "&nbsp;&nbsp;1. <b>Rotate or revoke it first.</b> It has been public; "
+            "assume it was copied. Cleaning the history does not make a leaked "
+            "key safe.<br>"
+            "&nbsp;&nbsp;2. Then choose <b>Remove from history…</b>. That "
+            "rewrites every commit and force-pushes, which cannot be undone on "
+            "GitHub.")
     return head + tail
 
 
