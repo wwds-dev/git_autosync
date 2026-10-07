@@ -37,6 +37,8 @@ from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
 from .macos_dock import activate_app, set_dock_icon_visible
 from . import repo_row
+from .problem_advice import collect as collect_advice
+from .problems_dialog import ProblemsDialog
 from .repo_row import RepoRow
 from .rescan_dialog import RescanDialog, plan_changes
 from .runner import AutosyncRunner
@@ -111,6 +113,18 @@ def _confirm_sync_dialog(parent, heading: str, preview: str) -> bool:
     layout.addWidget(btns)
 
     return dlg.exec() == QDialog.Accepted
+
+
+def _fit_message_box_buttons(box) -> None:
+    """Let a QMessageBox's buttons be as wide as their labels.
+
+    macOS gives every button in a message box the same width, sized for the
+    standard ones, and Qt does not grow it for a custom label — so anything
+    longer than "Cancel" is silently clipped mid-word.
+    """
+    for button in box.buttons():
+        needed = button.fontMetrics().horizontalAdvance(button.text())
+        button.setMinimumWidth(needed + 34)   # padding + a little breathing room
 
 
 def _format_git_status(raw: str) -> str:
@@ -617,6 +631,31 @@ class MainWindow(QMainWindow):
             box.setCheckState(Qt.PartiallyChecked)
         box.blockSignals(False)
 
+    def _show_problem_advice(self, summary):
+        """After a run with failures, say what each one means and offer the fix.
+
+        The reasons already existed in the summary, but only in a tooltip and
+        the log — a blocked repo stayed blocked because nothing pointed at the
+        triage behind "Fix leak…".
+        """
+        advices = collect_advice(summary.get("repos", {}))
+        if not advices:
+            return
+        ProblemsDialog(self, advices, self._run_advice_action).exec()
+
+    def _run_advice_action(self, action: str, name: str):
+        handlers = {
+            "leak": self._on_open_ignore,
+            "pull": self._on_pull,
+            "remove": self._on_remove_entry,
+        }
+        if action == "create_repo":
+            self._on_create_repo()
+            return
+        handler = handlers.get(action)
+        if handler:
+            handler(name)
+
     def _on_pull_selected(self):
         """Pull every ticked repo that is actually behind."""
         targets = [n for n in self._checked_repos() if n in self._behind]
@@ -1045,6 +1084,10 @@ class MainWindow(QMainWindow):
         if not self._current_dry_run:
             self._notify(exit_code, summary.get("counts"))
 
+        # Explain the failures and offer the fix, rather than leaving the
+        # reason in a tooltip the user has to go looking for.
+        QTimer.singleShot(0, lambda: self._show_problem_advice(summary))
+
     def _notify(self, exit_code: int, counts: dict | None):
         if counts:
             body = (f"Synced {counts['synced']}, blocked {counts['blocked']}, "
@@ -1150,13 +1193,14 @@ class MainWindow(QMainWindow):
         box.setWindowTitle(f"Why is {name} blocked?")
         box.setTextFormat(Qt.RichText)
         box.setText(leak_triage.describe_block(name, finding, where))
-        false_btn = box.addButton("False positive — allowlist…", QMessageBox.ActionRole)
+        false_btn = box.addButton("Allowlist (false positive)…", QMessageBox.ActionRole)
         real_btn = None
         if where != leak_triage.UNCOMMITTED:
-            real_btn = box.addButton("Real secret — remove from history…",
+            real_btn = box.addButton("Remove from history…",
                                      QMessageBox.AcceptRole)
         manage_btn = box.addButton("Manage allowlist…", QMessageBox.ActionRole)
         box.addButton("Close", QMessageBox.RejectRole)
+        _fit_message_box_buttons(box)
         box.exec()
         clicked = box.clickedButton()
         if clicked is false_btn:
@@ -1277,6 +1321,7 @@ class MainWindow(QMainWindow):
                     "A dry-run will now re-check the repo.")
         undo_btn = box.addButton("Undo", QMessageBox.DestructiveRole)
         box.addButton(QMessageBox.Ok)
+        _fit_message_box_buttons(box)
         box.exec()
         if box.clickedButton() is undo_btn:
             leak_triage.remove_ignore_entry(ignore_path, fp)
