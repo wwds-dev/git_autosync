@@ -19,7 +19,14 @@ rm -rf "/Applications/git_autosync.app"
 cp -R dist/git_autosync.app /Applications/
 
 # Remove build artefacts so Spotlight doesn't index a second copy from dist/.
-rm -rf build dist
+# Tolerate failure: something (Spotlight, a Finder window, an antivirus) can be
+# holding a file in dist/ for a moment, and `rm` then prints "Directory not
+# empty" — which looked like the build had failed even though the app was
+# already copied into /Applications on the line above.
+rm -rf build dist 2>/dev/null || {
+  sleep 1
+  rm -rf build dist 2>/dev/null || echo "Note: could not clear build/ and dist/ — harmless, the app is installed."
+}
 
 echo "Installed: /Applications/git_autosync.app"
 echo "First launch from Finder: right-click -> Open (unsigned app, ad-hoc signature only)."
