@@ -424,9 +424,9 @@ so you don't need to open the window at all, a **Start at login** toggle, and
 `/Applications/git_autosync.app` with `--background`.
 
 The **Schedule…** job is a different LaunchAgent that runs `git_autosync.sh`
-directly, so scheduled syncs do not depend on the app being open. (The Quit
-confirmation currently says background syncs stop; that wording predates this and
-is tracked in `TODO.md`.)
+directly, so scheduled syncs do not depend on the app being open — and the Quit
+button says so, because quitting the window has no power over a launchd job and
+promising otherwise sent people looking for a sync that had never stopped.
 
 The app is **single-instance**: launching a second copy raises the existing
 window instead of opening a duplicate. Launching with `--background` skips

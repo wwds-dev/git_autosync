@@ -215,7 +215,18 @@ process_repo(){
       log "  DRY-RUN: would create a $CREATE_REMOTE GitHub repo '$name' and push."
       SUMMARY+=("OK      $label  (dry-run: would create $CREATE_REMOTE repo + push)")
     elif [ "$mode" = "push-only" ]; then
-      if [ "$ahead" -gt 0 ]; then
+      if [ "${behind:-0}" -gt 0 ]; then
+        # The same blocker the two branches below check for. push-only was the
+        # one dry-run path that skipped it, so a repo behind its remote was
+        # reported OK and the real run's push was then rejected with "fetch
+        # first" — the surprise this whole check exists to stop. push-only is
+        # if anything the likelier place to hit it: these are the repos someone
+        # is working in, so they are the ones that get pulled on another
+        # machine and left behind here.
+        log "  DRY-RUN: push-only — behind remote by $behind commit(s) — a push would be REJECTED. Pull first."
+        SUMMARY+=("ERROR   $label  (dry-run: behind remote by $behind - pull first)")
+        N_ERR=$((N_ERR+1)); git reset -q 2>/dev/null; return
+      elif [ "$ahead" -gt 0 ]; then
         log "  DRY-RUN: push-only — would push $ahead commit(s):"
         git log --oneline '@{u}..HEAD' | sed 's/^/      /' | tee -a "$LOG"
         SUMMARY+=("OK      $label  (dry-run: would push $ahead commit(s), push-only)")

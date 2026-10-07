@@ -116,28 +116,79 @@ def test_behind_state_survives_a_row_rebuild(window):
     assert len(still) == len(names), f"lost Pull on {set(names) - set(still)}"
 
 
-def test_hiding_to_the_menu_bar_survives_activation(window):
+def _pump(app, times=3):
+    for _ in range(times):
+        app.processEvents()
+
+
+@pytest.fixture
+def parked(window):
+    """`window`, with a stand-in tray and the real Dock filter installed.
+
+    Both halves matter. Offscreen has no system tray, so MainWindow leaves
+    `_tray` None and every hide path takes the real-quit branch instead. And
+    `_DockActivateFilter` is installed by `main()`, not by the window — without
+    it here, "activation did not re-open the window" is a fact about a test
+    that installed nothing to re-open it.
+    """
+    from app.main import _DockActivateFilter
+
+    class _Tray:
+        def isVisible(self):
+            return True
+
+        def showMessage(self, *a, **k):
+            pass
+
+        def hide(self):
+            pass
+
+    app = QtWidgets.QApplication.instance()
+    window._tray = _Tray()
+    window._tray_hint_shown = True
+    # `main()` does this and nothing else does. Without it `_App.event()` finds
+    # no window, hands the quit to Qt, and the window closes by the ordinary
+    # route — so a test of the quit interception would pass with the
+    # interception removed.
+    app._window = window
+    dock_filter = _DockActivateFilter(window)
+    app.installEventFilter(dock_filter)
+    window.show()
+    _pump(app)
+    yield app, window
+    app.removeEventFilter(dock_filter)
+    app._window = None
+    app.allow_quit = False
+    window.hidden_to_tray = False
+    window._tray = None
+
+
+def test_the_dock_filter_does_reopen_a_merely_hidden_window(parked):
+    """The control. Every assertion below is that the window *stayed* hidden,
+    which a filter that never runs would also satisfy — so prove first that
+    this filter runs and does re-open a window that was not parked."""
+    from PySide6.QtCore import QEvent
+
+    app, window = parked
+    window.hide()
+    window.hidden_to_tray = False
+    _pump(app)
+
+    app.sendEvent(app, QEvent(QEvent.ApplicationActivate))
+    _pump(app)
+
+    assert window.isVisible(), "the Dock filter is not installed or not firing"
+
+
+def test_hiding_to_the_menu_bar_survives_activation(parked):
     """Clicking the tray icon activates the app. While the window was parked in
     the menu bar, that re-opened it — so the red button looked inert and Quit
     looked like it only fronted the app."""
     from PySide6.QtCore import QEvent
 
-    app = QtWidgets.QApplication.instance()
-    # Offscreen has no system tray, so MainWindow leaves _tray None and
-    # closeEvent takes the real-quit branch. Stub the one thing it asks.
-    class _Tray:
-        def isVisible(self):
-            return True
-        def showMessage(self, *a, **k):
-            pass
-    window._tray = _Tray()
-    window._tray_hint_shown = True
-    window.show()
-    for _ in range(3):
-        app.processEvents()
+    app, window = parked
     window.close()
-    for _ in range(3):
-        app.processEvents()
+    _pump(app)
     assert not window.isVisible()
     assert window.hidden_to_tray
 
@@ -147,7 +198,28 @@ def test_hiding_to_the_menu_bar_survives_activation(window):
     assert not window.isVisible(), "activation re-opened a window hidden to the tray"
 
     window._tray_open()
-    for _ in range(3):
-        app.processEvents()
+    _pump(app)
     assert window.isVisible() and not window.hidden_to_tray
-    window._tray = None
+
+
+def test_a_quit_gesture_parks_the_window_like_the_red_button(parked):
+    """Cmd+Q and Dock -> Quit arrive as QEvent.Quit on the application object,
+    where `_App.event()` used to hide the window itself rather than close it.
+    That skipped `closeEvent`, so `hidden_to_tray` stayed False and the next
+    activation — clicking the menu bar icon — put the window straight back:
+    Cmd+Q read as having merely fronted the app. The red button never had the
+    bug, because it goes through `closeEvent` already."""
+    from PySide6.QtCore import QEvent
+
+    app, window = parked
+    assert window.isVisible()
+
+    app.sendEvent(app, QEvent(QEvent.Quit))
+    _pump(app)
+
+    assert not window.isVisible(), "the quit gesture did not hide the window"
+    assert window.hidden_to_tray, "the quit gesture hid the window without parking it"
+
+    app.sendEvent(app, QEvent(QEvent.ApplicationActivate))
+    _pump(app)
+    assert not window.isVisible(), "activation re-opened a window parked by Cmd+Q"

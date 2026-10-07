@@ -169,3 +169,79 @@ class TestConfigParsing:
         _assert_engine_found_the_repo(result)
         assert git(repo, "rev-parse", "HEAD") != before, (
             "a misspelled flag turned off committing")
+
+
+# ----------------------------------------------------------------------
+# A dry-run must not call a repo safe when the push would be rejected
+# ----------------------------------------------------------------------
+def _remote_moves_ahead(root: Path):
+    """Put a commit on the remote that the fixture's clone does not have.
+
+    Through a second clone, because the remote is bare and cannot be committed
+    to directly. This is the ordinary way it happens: the same repo pulled or
+    pushed on another machine while this one sat still.
+    """
+    other = root / "other"
+    # --branch, because the bare remote was created by `git init --bare` and
+    # its HEAD still points at the default branch name, not the `main` the
+    # fixture pushed; a plain clone lands with nothing checked out.
+    subprocess.run(["git", "clone", "-q", "--branch", "main",
+                    str(root / "remote.git"), str(other)], check=True)
+    for key, value in (("user.name", "Other"), ("user.email", "o@example.com"),
+                       ("commit.gpgsign", "false")):
+        git(other, "config", key, value)
+    (other / "upstream.md").write_text("from the other machine\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", "upstream work")
+    git(other, "push", "-q", "origin", "main")
+
+
+class TestADryRunRefusesToCallABehindRepoSafe:
+    """The point of a dry-run is that the real run holds no surprises.
+
+    Being behind the remote is the one state where a push is certain to be
+    rejected, so a dry-run that reports OK is worse than no dry-run at all.
+    Sweep mode checked for it from the start; push-only never did — and
+    push-only is the likelier place to hit it, because those are the repos
+    someone is actually working in.
+    """
+
+    def test_push_only_says_pull_first(self, workspace):
+        root, repo = workspace
+        _remote_moves_ahead(root)
+        (repo / "local.md").write_text("mine\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "local work")
+
+        result = run_engine(root, "proj  push-only\n", "--dry-run")
+        _assert_engine_found_the_repo(result)
+
+        assert "pull first" in result.stdout, (
+            "a behind push-only repo was reported safe:\n" + result.stdout[-800:])
+        assert "would push 1 commit(s), push-only" not in result.stdout
+
+    def test_sweep_still_says_it_too(self, workspace):
+        """The branch that always worked — kept so a refactor cannot trade one
+        for the other."""
+        root, repo = workspace
+        _remote_moves_ahead(root)
+        (repo / "local.md").write_text("mine\n")
+
+        result = run_engine(root, "proj\n", "--dry-run")
+        _assert_engine_found_the_repo(result)
+
+        assert "pull first" in result.stdout
+
+    def test_a_level_push_only_repo_is_still_reported_ready(self, workspace):
+        """The contrast: with nothing on the remote to pull, the new check must
+        not get in the way of the answer the dry-run exists to give."""
+        root, repo = workspace
+        (repo / "local.md").write_text("mine\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "local work")
+
+        result = run_engine(root, "proj  push-only\n", "--dry-run")
+        _assert_engine_found_the_repo(result)
+
+        assert "would push 1 commit(s), push-only" in result.stdout
+        assert "pull first" not in result.stdout

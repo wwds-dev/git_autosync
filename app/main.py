@@ -24,6 +24,10 @@ class _App(QApplication):
         super().__init__(*args)
         self.allow_quit = False   # set True by the tray's own Quit action
         self._window: MainWindow | None = None
+        # Guards against re-entering the hide below. Closing the window can
+        # itself put a QEvent.Close on the application object, and acting on
+        # that would call close() again on an already-hidden window.
+        self._hiding_to_tray = False
 
     def event(self, e):
         # Cmd+Q and Dock -> Quit arrive as QEvent.Quit; the red button and some
@@ -34,10 +38,21 @@ class _App(QApplication):
             window = self._window
             tray = getattr(window, "_tray", None) if window else None
             if tray and tray.isVisible():
-                window.hide()
-                # Hiding alone leaves the dock tile behind, which reads as a
-                # failed quit — drop out of the dock too.
-                set_dock_icon_visible(False)
+                # Through the window's own close path, not a hide repeated
+                # here. `closeEvent` hides, drops the Dock tile, shows the
+                # "still running in the menu bar" hint — and records
+                # `hidden_to_tray`, which is what _DockActivateFilter reads.
+                # Hiding directly left that flag False, so the window was gone
+                # until the next activation (clicking the menu bar icon) put it
+                # straight back: Cmd+Q looked like it had merely fronted the
+                # app. The red button never had the bug because it goes through
+                # closeEvent already.
+                if not self._hiding_to_tray:
+                    self._hiding_to_tray = True
+                    try:
+                        window.close()
+                    finally:
+                        self._hiding_to_tray = False
                 e.ignore()
                 return True   # suppress the quit — keep running in the tray
         return super().event(e)
@@ -119,6 +134,11 @@ def main():
         # still a Regular app, so it keeps a Dock tile and macOS can bring it
         # forward during login even though no window was shown.
         set_dock_icon_visible(False)
+        # And it is hidden to the tray in exactly the sense the filter means,
+        # even though no window was ever shown to hide. Leaving the flag False
+        # let the first activation — a click on the menu bar icon — open the
+        # window a login start had deliberately not opened.
+        window.hidden_to_tray = True
     else:
         window.show()
 

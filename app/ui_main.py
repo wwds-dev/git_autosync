@@ -319,8 +319,9 @@ class MainWindow(QMainWindow):
         self.quit_btn = QPushButton("Quit")
         self.quit_btn.setObjectName("quitButton")
         self.quit_btn.setToolTip(
-            "Quit git_autosync completely — no menu bar icon, and scheduled "
-            "syncs stop until you open it again.")
+            "Quit git_autosync completely — no window and no menu bar icon. "
+            "A schedule set up with ‘Schedule…’ keeps running without the "
+            "app; turn it off there to stop it.")
         self.quit_btn.clicked.connect(self._on_quit_clicked)
         secondary_row.addWidget(self.quit_btn)
         root.addLayout(secondary_row)
@@ -1491,9 +1492,12 @@ class MainWindow(QMainWindow):
         if self._tray and self._tray.isVisible():
             answer = QMessageBox.question(
                 self, "Quit git_autosync?",
-                "Quit completely?\n\nBackground syncs stop until you open the "
-                "app again. To keep them running, use ‘Hide to menu bar’ "
-                "instead.",
+                "Quit completely?\n\nThe window and the menu bar icon both go "
+                "away. A schedule set up with ‘Schedule…’ is a launchd job "
+                "that runs the engine on its own, so it keeps syncing with "
+                "the app closed — turn it off in ‘Schedule…’ if you want that "
+                "to stop too.\n\nTo keep the menu bar icon, use ‘Hide to menu "
+                "bar’ instead.",
                 QMessageBox.Cancel | QMessageBox.Close,
                 QMessageBox.Close,
             )

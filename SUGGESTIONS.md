@@ -35,6 +35,7 @@ Status: `IDEA` · `CONSIDERING` · `PLANNED` · `DONE` · `REJECTED`
 | Pull button on rows that are behind (`--ff-only`), plus **Pull selected** and bulk **Privacy…** for ticked rows | Oct 2026 |
 | Hiding to the menu bar survives tray clicks and app activation; a login start has no Dock icon | Oct 2026 |
 | Repo table packs left with banded rows; tray menu readable in Dark Mode | Oct 2026 |
+| ⌘Q parks the window the way the red button does; a push-only dry-run reports behind-remote; Quit stops claiming it stops scheduled syncs | Oct 2026 |
 
 ## Rejected
 
