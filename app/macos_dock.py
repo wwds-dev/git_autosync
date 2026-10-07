@@ -25,6 +25,33 @@ except Exception:
     _objc = None
 
 
+def activate_app() -> bool:
+    """Bring this app forward, ignoring which app is currently active.
+
+    A menu bar app is normally not the active app, and macOS gives an inactive
+    app's first click to activation rather than to the control under the
+    cursor — so the tray menu never opens without this.
+    """
+    if _objc is None:
+        return False
+    try:
+        send_id = ctypes.cast(
+            _objc.objc_msgSend,
+            ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
+        send_activate = ctypes.cast(
+            _objc.objc_msgSend,
+            ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool))
+        ns_app = send_id(_objc.objc_getClass(b"NSApplication"),
+                         _objc.sel_registerName(b"sharedApplication"))
+        if not ns_app:
+            return False
+        send_activate(ns_app,
+                      _objc.sel_registerName(b"activateIgnoringOtherApps:"), True)
+        return True
+    except Exception:
+        return False
+
+
 def set_dock_icon_visible(visible: bool) -> bool:
     """Show or hide the dock tile. True if the policy was applied."""
     if _objc is None:
