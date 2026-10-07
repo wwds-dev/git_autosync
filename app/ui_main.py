@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -1351,6 +1352,13 @@ class MainWindow(QMainWindow):
         # once _setup_tray returns, leaving the status item holding a freed C++
         # object.
         self._tray_menu = menu = QMenu(self)
+        # A click on the icon while the menu is open is consumed by the menu's
+        # own grab, which closes it — and the tray's activated signal then
+        # fires and reopens it. Note when it closed so that reopen can be
+        # suppressed; without this the second click looks like a no-op.
+        self._menu_closed_at = 0.0
+        menu.aboutToHide.connect(
+            lambda: setattr(self, "_menu_closed_at", time.monotonic()))
         menu.addAction("Open git_autosync", self._tray_open)
         menu.addSeparator()
         menu.addAction("Dry-run", lambda: self._run(dry_run=True))
@@ -1421,6 +1429,10 @@ class MainWindow(QMainWindow):
         """
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.Context,
                       QSystemTrayIcon.DoubleClick):
+            # The grab already closed the menu for us; reopening now would
+            # undo the user's dismiss.
+            if time.monotonic() - getattr(self, "_menu_closed_at", 0.0) < 0.35:
+                return
             QTimer.singleShot(0, self._popup_tray_menu)
 
     def _popup_tray_menu(self):
