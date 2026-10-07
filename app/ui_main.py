@@ -34,7 +34,7 @@ from . import config, leak_triage, login_item, paths, repo_state, scheduler, ver
 from .create_repo_dialog import CreateRepoDialog
 from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
-from .macos_dock import make_window_nonactivating, set_dock_icon_visible
+from .macos_dock import activate_app, set_dock_icon_visible
 from . import repo_row
 from .repo_row import RepoRow
 from .rescan_dialog import RescanDialog, plan_changes
@@ -1424,24 +1424,24 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._popup_tray_menu)
 
     def _popup_tray_menu(self):
-        """Show the tray menu without activating the app.
+        """Show the tray menu.
 
-        The app must not be activated: activation is what drags the main window
-        forward, and only "Open git_autosync" should do that. But an inactive
-        app's first click normally goes to activation rather than to the item
-        under the cursor, which is why the menu did nothing when activation was
-        simply removed.
+        activate_app() is here because it is the only arrangement confirmed to
+        both open the menu and let its items fire. The alternatives were tried
+        and each failed on hardware:
 
-        The way out is the panel style. Qt backs a popup with a QNSPanel, and a
-        panel carrying NSWindowStyleMaskNonactivatingPanel takes mouse events
-        while its application is inactive. So the menu is shown first (which
-        creates the window), the style is applied to it, and the click lands on
-        the item with the app still in the background.
+        - setContextMenu (native, no activation): aborts on macOS 27 from an
+          NSException in Qt's NSMenuDidBeginTracking observer. Two crash
+          reports, and the exception guard cannot catch it — it is raised in a
+          CoreFoundation callout, outside AppKit's try/catch.
+        - popup() without activation: menu never opens, because macOS spends an
+          inactive app's first click on activation.
+        - non-activating QNSPanel without activation: menu opens but items do
+          not respond.
 
-        The native alternative, setContextMenu, is not available here: it aborts
-        on macOS 27 from an NSException in Qt's NSMenuDidBeginTracking observer,
-        raised inside a CoreFoundation callout where the exception guard cannot
-        reach it.
+        The cost is that activating brings the main window forward when it is
+        already open. A window parked in the menu bar stays parked —
+        _DockActivateFilter ignores activation while hidden_to_tray is set.
         """
         menu = getattr(self, "_tray_menu", None)
         if menu is None or self._tray is None:
@@ -1450,17 +1450,8 @@ class MainWindow(QMainWindow):
             menu.hide()          # a second click on the icon dismisses it
             return
         try:
-            menu.popup(QCursor.pos())
-            result = make_window_nonactivating(int(menu.winId()))
-            if not self._panel_style_logged:
-                self._panel_style_logged = True
-                if "nonactivating ON" not in result:
-                    # Depends on Qt's private window class, so say so rather
-                    # than quietly going back to stealing focus.
-                    self._append_output(
-                        f"Tray menu: could not make the popup non-activating "
-                        f"({result}). Clicking the icon may bring the window "
-                        f"forward.\n")
+            activate_app()
+            menu.exec(QCursor.pos())
         except Exception as exc:          # never let the tray take the app down
             print(f"tray menu failed to open: {exc}")
 
