@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QFileSystemWatcher, QSize, QTimer
-from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -34,7 +34,7 @@ from . import config, leak_triage, login_item, paths, repo_state, scheduler, ver
 from .create_repo_dialog import CreateRepoDialog
 from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
-from .macos_dock import activate_app, set_dock_icon_visible
+from .macos_dock import set_dock_icon_visible
 from . import repo_row
 from .repo_row import RepoRow
 from .rescan_dialog import RescanDialog, plan_changes
@@ -1361,14 +1361,17 @@ class MainWindow(QMainWindow):
         login_action.toggled.connect(self._on_toggle_login_item)
         menu.addSeparator()
         menu.addAction("Quit", self._tray_quit)
-        # Not setContextMenu(): that hands the menu to AppKit, which opens it
-        # inside an NSMenuTrackingSession during event dispatch. Qt observes
-        # NSMenuDidBeginTracking and asks [NSApp currentEvent] for clickCount;
-        # on macOS 27 that event is not a mouse event there, the assertion
-        # raises an NSException, and it unwinds through libqcocoa's C++ frames
-        # into std::terminate — SIGABRT, no log. Showing the menu ourselves one
-        # event-loop turn later keeps it out of that callout.
-        self._tray.activated.connect(self._on_tray_activated)
+        # AppKit owns the menu. It opens on click without activating the app,
+        # which is the only way the icon can show a menu and leave the window
+        # where it is — every hand-rolled popup needed activation first, and
+        # activation is what dragged the app to the front.
+        #
+        # This path aborted on macOS 27 once (an NSException from Qt's
+        # NSMenuDidBeginTracking observer calling -[NSEvent clickCount], which
+        # unwound into std::terminate). The exception guard installed at
+        # startup exists for that class of failure; if it recurs it lands in
+        # logs/crash.log instead of vanishing.
+        self._tray.setContextMenu(menu)
         self._tray.show()
 
         QApplication.instance().setQuitOnLastWindowClosed(False)
@@ -1411,38 +1414,13 @@ class MainWindow(QMainWindow):
         self._refresh_last_sync_label()
 
     def _on_tray_activated(self, reason):
-        """Open the tray menu, but never from inside AppKit's callout.
+        """Nothing: AppKit opens the context menu itself.
 
-        Opening it here synchronously is what aborts the process (see
-        _setup_tray). Deferring to the next event-loop turn means the menu is
-        opened from Qt's own loop, after AppKit has finished dispatching the
-        click.
+        A double-click never arrives once a context menu is attached, and
+        opening the window from here is exactly the behaviour being removed —
+        only 'Open git_autosync' brings it forward.
         """
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.Context,
-                      QSystemTrayIcon.DoubleClick):
-            QTimer.singleShot(0, self._popup_tray_menu)
-
-    def _popup_tray_menu(self):
-        menu = getattr(self, "_tray_menu", None)
-        if menu is None or self._tray is None:
-            return
-        try:
-            # The app must be active or macOS spends the click on activating it
-            # rather than on the menu item, and the menu never opens. Removing
-            # this made the icon do nothing; a QTest click still passed, because
-            # synthetic events go straight to the widget and never exercise
-            # activation at all.
-            #
-            # It no longer drags the window forward: _DockActivateFilter ignores
-            # activation while hidden_to_tray is set, which is what fronted the
-            # app before.
-            activate_app()
-            # exec(), not popup(): exec runs the menu's own event loop and grabs
-            # input, so the click that selects an item is actually delivered.
-            # Safe here because this already runs a turn after AppKit's dispatch.
-            menu.exec(QCursor.pos())
-        except Exception as exc:          # never let the tray take the app down
-            print(f"tray menu failed to open: {exc}")
+        return
 
     def _show_tray_hint(self):
         """Say what happened — a quit that visibly does nothing reads as a hang."""
