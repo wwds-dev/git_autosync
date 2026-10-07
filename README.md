@@ -7,7 +7,11 @@ Leak-gated auto commit & push for your GitHub projects.
 This is its own project repo (`~/Documents/lab/active/git_autosync`). It holds the
 CLI engine (`git_autosync.sh`, tested and canonical) plus a PySide6 desktop GUI
 (`app/`) that wraps the same engine — see `HANDOVER.md` for the full design notes.
-Tests live in `tests/` (`test_runner.py`).
+Tests live in `tests/`: the engine is driven against throwaway repos in
+`test_push_only.py`, summary parsing is in `test_runner.py`, and
+`test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
+to check header labels fit, the tray menu stays readable, rows are banded on screen,
+Pull buttons survive a list rebuild and a window hidden to the menu bar stays hidden.
 
 For every repo listed in `autosync_repos.txt`, the tool:
 
@@ -141,6 +145,24 @@ If you want a meaningful message but don't want to type it every time, just comm
 by hand (`git commit -m "..."`) before running autosync — the tool only makes its
 own commit when there are un-committed changes.
 
+## When the remote is ahead of you
+
+autosync never pulls. Before deciding anything it runs `git fetch origin` on any
+branch with an upstream, so it compares against where the remote really is rather
+than where it was last seen.
+
+- **Dry-run** (sweep mode) reports a repo that is behind as an **ERROR**,
+  `dry-run: behind remote by N - pull first`, instead of "would sync" — otherwise the
+  dry-run says "safe" and the real push is then rejected. (Push-only repos do not get
+  this check in a dry-run yet.)
+- **A failed push names its cause** in the summary instead of "push failed (see log)":
+  remote has commits you do not have (pull first), not authorised (check `gh auth`),
+  network problem (transient), remote repo not found (renamed/deleted/wrong URL), or
+  rejected by a branch protection rule. Anything else still says "see log".
+- The GUI offers the fix: see **Pull** and **Pull selected** below. Both use
+  `git pull --ff-only`, so they either fast-forward cleanly or refuse; a repo that has
+  diverged is left untouched with the `git pull --rebase` command to run yourself.
+
 ## Logs
 
 Every run appends to `logs/autosync_YYYYMMDD.log`, including the gitleaks output
@@ -190,7 +212,8 @@ history anyone reads. Two limits worth knowing before adding a project:
 - Secrets in *new changes* → blocked before the commit is ever made.
 - Secrets already in *history* → blocked before any push.
 - gitleaks errors (can't run) → treated as failure, repo skipped — never a silent pass.
-- `--dry-run` makes zero changes to your repos or GitHub.
+- `--dry-run` makes zero changes to your repos or GitHub. (It does `git fetch origin`,
+  which only updates your local copy of the remote's branches.)
 - `--create-remote` runs through the same gate before `gh repo create --push` is
   ever called — a detected secret blocks repo creation entirely, not just the push.
 
@@ -254,6 +277,9 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     checks or clears every row.
   - The repo name first, followed by its containing folder path in muted text. Column
     headers keep the checkbox, repository, last-commit, status, and action fields aligned.
+    The columns are fixed-width and the table packs to the left, so on a wide window the
+    buttons stay next to their repo name instead of drifting to the far edge (the window's
+    minimum width is 900px for that reason). Rows are banded in alternating shades.
   - A row for a repo whose folder can no longer be found on disk goes grey and disabled
     except for a **Remove** button, which drops just that entry from
     `autosync_repos.txt` — no files and no GitHub repo are touched.
@@ -265,7 +291,9 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     for the exact commit timestamp plus when git_autosync itself last pushed.
   - A colored **status badge** after each run:
     `✓ Synced` (green) · `✕ Blocked` (red) · `⊘ Skipped` (grey) ·
-    `⚠ Error` (amber) · `No changes` (grey).
+    `⚠ Error` (amber) · `No changes` (grey). Hover the row, name or badge for the
+    reason behind an error or block (e.g. "remote has 6 commit(s) you do not have -
+    pull first").
   - **Dry-run** button — scans just this repo, never commits or pushes.
   - **Sync** button — syncs just this repo after the leak-gate clears it.
     Shows a diff preview of pending changes (with human-readable labels —
@@ -284,6 +312,10 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     - *Real secret*: `git-filter-repo` rewrite. Force-pushes only if the value
       was already on GitHub, and only after a clean rescan.
     - *Manage allowlist*: view and remove `.gitleaksignore` entries.
+  - **Pull** button (amber) — appears only when a run reported the repo is behind its
+    remote. Fetches and fast-forwards (`git pull --ff-only`); never discards local work.
+    If the repo has diverged it says so and changes nothing. Other rows keep their Pull
+    buttons after one repo is pulled.
   - **Allowlist** button — appears on a row only after a blocked run. Same
     confirmed, undoable allowlist as *Fix leak… → False positive*.
 - **Auto-reload** — the list refreshes automatically when you save
@@ -325,6 +357,15 @@ the `AUTOSYNC_COMMIT_MSG` env var to the engine script.
   frozen bundle with no `.git`), so a stale page is obvious rather than trusted.
 - **Tooltips** — toggles explanatory tooltips on every control.
 - **Edit list** — opens `autosync_repos.txt` in your default editor.
+- **Pull selected** — fast-forwards every ticked repo that the last run found behind its
+  remote, after a confirmation listing them. Repos that are level are skipped, diverged
+  ones are reported and left alone. If none is known to be behind, it tells you to run
+  Dry-run first (that is what checks the remotes).
+- **Privacy…** — sets every ticked repo to private or public in one confirmed step
+  (Yes = private, No = public, Cancel = leave them).
+- **Hide to menu bar** — closes the window and drops the Dock icon; the app keeps
+  running in the menu bar.
+- **Quit** — exits completely, after asking.
 
 **Output pane:**
 
@@ -332,6 +373,11 @@ Live log output from the engine script, with ANSI colour codes stripped for
 readability. After a blocked run, the output pane appends a **leak report**
 listing the file, rule, and fingerprint that triggered the gate for each blocked
 repo, so you know exactly what to fix without opening the log file.
+
+**Summary banner:**
+
+Green after a clean run. When anything was blocked or errored it turns red and names
+up to three of those repos with their reason (`+N more` beyond that).
 
 **Status bar:**
 
@@ -353,27 +399,41 @@ The app lives in the macOS menu bar as a coloured dot:
 - **Grey** — no real run has completed yet.
 
 Closing the main window does **not** quit the app — it hides to the tray so
-scheduled syncs keep running in the background. Neither does ⌘Q or the Dock's
+the menu bar icon and its actions stay available. Neither does ⌘Q or the Dock's
 **Quit**: both hide the window and drop the app out of the Dock, leaving it
 running in the menu bar. macOS will report the quit as cancelled; that is the
 app declining to exit, not an error.
 
-To reopen: click the tray dot, or launch the app again from Finder — the second
-launch signals the running copy to come back to the Dock and un-hide.
+After the red button or **Hide to menu bar** the window stays hidden: clicking the
+tray dot only opens its menu, and the app becoming active (which a tray click causes) no longer brings the window back
+behind the menu. To reopen, choose **Open git_autosync** in the tray menu, or launch
+the app again from Finder — the second launch signals the running copy to come back
+to the Dock and un-hide.
 
-To quit fully, ending background syncs, use the **Quit** button at the bottom of
+To quit fully, use the **Quit** button at the bottom of
 the window (it asks first) or **Quit** in the tray menu. Those are the only two
 exits — ⌘Q and the Dock deliberately hide instead, so a menu bar app is not
 killed by the gesture that closes a window.
 
-The tray menu also has quick **Dry-run** and **Sync now** actions so you don't
-need to open the window at all.
+The tray menu has **Open git_autosync**, quick **Dry-run** and **Sync now** actions
+so you don't need to open the window at all, a **Start at login** toggle, and
+**Quit**. The menu paints its own light surface, so it stays readable in Dark Mode.
+
+**Start at login** writes a separate LaunchAgent
+(`~/Library/LaunchAgents/com.wwds-dev.git-autosync-login.plist`) that starts
+`/Applications/git_autosync.app` with `--background`.
+
+The **Schedule…** job is a different LaunchAgent that runs `git_autosync.sh`
+directly, so scheduled syncs do not depend on the app being open. (The Quit
+confirmation currently says background syncs stop; that wording predates this and
+is tracked in `TODO.md`.)
 
 The app is **single-instance**: launching a second copy raises the existing
 window instead of opening a duplicate. Launching with `--background` skips
 both the window and the raise — the socket message tells the running instance
 to stay hidden — for starting the app unobtrusively (e.g. at login) without
-stealing focus.
+stealing focus. A first instance started with `--background` also starts without
+a Dock icon, so macOS cannot bring it forward during login.
 
 ### Running from source
 
@@ -419,9 +479,12 @@ needs right-click → Open (no Apple Developer ID / notarization yet).
 
 ## Git identity
 
-Commits use a pseudonymous identity, not a real name/email — `git config --global
-user.name / user.email` should already be set to the `wwds-dev` GitHub noreply
-identity. Don't hardcode a real name/email anywhere in this project.
+Commits use a pseudonymous identity, not a real name/email. The engine pins it on
+every commit it makes (`git -c user.name=… -c user.email=…`) rather than inheriting
+git config — a machine-wide `user.email` once put the real address into 78 commits
+across 7 public repos. The default is the `wwds-dev` GitHub noreply identity;
+override with `AUTOSYNC_GIT_NAME` / `AUTOSYNC_GIT_EMAIL`. Don't hardcode a real
+name/email anywhere in this project.
 
 ## Version
 

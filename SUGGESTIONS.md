@@ -31,6 +31,10 @@ Status: `IDEA` · `CONSIDERING` · `PLANNED` · `DONE` · `REJECTED`
 | Remove button for a repo row whose folder is gone (list-only, no files/GitHub touched) | Sep 2026 |
 | macOS 27 crash guard — catches AppKit ObjC exceptions instead of a silent SIGABRT, logs to crash.log | Sep 2026 |
 | Docs viewer shows a "Last updated" badge from the README's own commit date | Sep 2026 |
+| Engine fetches before deciding; dry-run flags a repo that is behind its remote; a failed push names its cause | Oct 2026 |
+| Pull button on rows that are behind (`--ff-only`), plus **Pull selected** and bulk **Privacy…** for ticked rows | Oct 2026 |
+| Hiding to the menu bar survives tray clicks and app activation; a login start has no Dock icon | Oct 2026 |
+| Repo table packs left with banded rows; tray menu readable in Dark Mode | Oct 2026 |
 
 ## Rejected
 
