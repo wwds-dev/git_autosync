@@ -12,6 +12,10 @@ Tests live in `tests/`: the engine is driven against throwaway repos in
 `test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
 to check header labels fit, the tray menu stays readable, rows are banded on screen,
 Pull buttons survive a list rebuild and a window hidden to the menu bar stays hidden.
+`test_problem_advice.py` pins the per-repo failure advice, the shape of the leak
+triage text, and how `.gitleaksignore` fingerprints are split for display.
+`test_tray_panel.py` is opt-in and records a tray-menu experiment that was rejected
+(run it with `QT_QPA_PLATFORM=cocoa GUI_TESTS=1 .venv/bin/python -m pytest tests/test_tray_panel.py`).
 
 For every repo listed in `autosync_repos.txt`, the tool:
 
@@ -226,26 +230,36 @@ the finding is removed or allowlisted.
 After a blocked run, the **Output** pane shows a **Leak report** with the flagged
 file, line, rule, and *where* it is: in uncommitted changes, in local commits
 not yet pushed, or in history already on GitHub. **Fix leak…** on the row
-explains the block and offers the options that fit that location.
+explains the block and offers the options that fit that location. It asks one
+question — *is the flagged value a real credential?* — and each answer is
+written as a condition ("If it is NOT…", "If it IS…") that names the button it
+leads to. After the run, the **problems dialog** (see *Desktop app*) also offers
+**Fix leak…** for each blocked repo separately, since one may be a false
+positive while another is a real secret.
 
 **If it's a false positive** (a test dummy, an example value, a SQL literal that
 looks like a key):
-- Click **Allowlist**, or **Fix leak…** → *False positive*. The app asks first,
-  then adds the fingerprint to `.gitleaksignore`. That is a local file edit:
-  nothing is committed or pushed. The confirmation offers **Undo**, and
-  **Fix leak… → Manage allowlist** removes entries later. The repo is
+- Click **Allowlist**, or **Fix leak…** → **Allowlist (false positive)…**. The
+  app asks first, then adds the fingerprint to `.gitleaksignore`. That is a local
+  file edit: nothing is committed or pushed. The confirmation offers **Undo**, and
+  **Fix leak… → Manage allowlist…** removes entries later. The repo is
   re-checked automatically.
+- **Manage allowlist…** shows the entries as a table — File, Line, Rule and a
+  short Commit — so you can judge each one by the file it refers to; hover a row
+  for the full fingerprint. Removing an entry names the file and line and warns
+  that the repo will be blocked again on the next scan.
 - Fingerprints are pinned to a commit, so amending or rebasing that commit
   brings the finding back.
 
 **If it's a real secret** (API key, token, password):
 - *Uncommitted*: delete it from the file (move it to an env var or keychain).
-  Nothing else is needed.
-- *Committed, not yet pushed*: **Fix leak…** → *Real secret*. The value is
+  Nothing else is needed, and the dialog shows no history button in this case.
+- *Committed, not yet pushed*: **Fix leak…** → **Remove from history…**. The value is
   replaced with `[REDACTED]` in every commit on this Mac. Nothing is force-pushed:
   the next sync publishes the cleaned commits through the gate.
 - *Already on GitHub*: **rotate or revoke the key first**. Rewriting history
-  does not un-leak it. Then **Fix leak…** → *Real secret*. The app rewrites
+  does not un-leak it. Then **Fix leak…** → **Remove from history…**. The
+  dialog numbers these two steps in that order. The app rewrites
   history and scans all of it again. It force-pushes, leased to the commits
   origin had, only if that scan is clean. This cannot be undone on GitHub.
 - The engine's output is redacted, so the app looks the flagged value up again
@@ -308,16 +322,20 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
   - **Fix leak…** button — appears on every row; turns red while the repo is
     currently blocked, back to normal once it clears. Opens a dialog that
     explains the block and where the finding is (see *Handling blocked repos*):
-    - *False positive*: allowlist with confirmation and Undo.
-    - *Real secret*: `git-filter-repo` rewrite. Force-pushes only if the value
-      was already on GitHub, and only after a clean rescan.
-    - *Manage allowlist*: view and remove `.gitleaksignore` entries.
+    - **Allowlist (false positive)…**: allowlist with confirmation and Undo.
+    - **Remove from history…** (not shown for uncommitted findings):
+      `git-filter-repo` rewrite. Force-pushes only if the value was already on
+      GitHub, and only after a clean rescan.
+    - **Manage allowlist…**: a File / Line / Rule / Commit table of
+      `.gitleaksignore` entries, with removal.
+    Dialog buttons are sized to their labels, so long labels are no longer
+    clipped by macOS's fixed-width message-box buttons.
   - **Pull** button (amber) — appears only when a run reported the repo is behind its
     remote. Fetches and fast-forwards (`git pull --ff-only`); never discards local work.
     If the repo has diverged it says so and changes nothing. Other rows keep their Pull
     buttons after one repo is pulled.
   - **Allowlist** button — appears on a row only after a blocked run. Same
-    confirmed, undoable allowlist as *Fix leak… → False positive*.
+    confirmed, undoable allowlist as *Fix leak… → Allowlist (false positive)…*.
 - **Auto-reload** — the list refreshes automatically when you save
   `autosync_repos.txt`, with no restart needed (`QFileSystemWatcher`).
 - **Config-entry identity** — status is keyed by the configured entry, not only the leaf
@@ -379,6 +397,26 @@ repo, so you know exactly what to fix without opening the log file.
 Green after a clean run. When anything was blocked or errored it turns red and names
 up to three of those repos with their reason (`+N more` beyond that).
 
+**Problems dialog:**
+
+After any run — dry-run or real — in which a repo was blocked, errored or
+skipped, a dialog titled *Some repos need attention* lists one card per repo,
+worst first (blocked, then errors, then skips): what happened, what it means,
+and where there is one, the button that fixes it. Clicking it closes the dialog
+and opens that fix for that repo only:
+
+| Outcome | Button |
+|---|---|
+| Blocked by a leak | **Fix leak…** (that repo's triage) |
+| Behind its remote | **Pull** |
+| No GitHub remote | **Create GitHub Repo…** |
+| Not a git repository (moved or deleted) | **Remove from list** |
+
+Push rejected as unauthorised, network failures, a missing remote repository,
+branch protection and a failed scanner are explained with the command to check,
+but get no button, because they need a person. The wording lives in
+`app/problem_advice.py`; the dialog is `app/problems_dialog.py`.
+
 **Status bar:**
 
 - **Last sync** — timestamp from the engine's own state file (accurate whether
@@ -418,6 +456,16 @@ killed by the gesture that closes a window.
 The tray menu has **Open git_autosync**, quick **Dry-run** and **Sync now** actions
 so you don't need to open the window at all, a **Start at login** toggle, and
 **Quit**. The menu paints its own light surface, so it stays readable in Dark Mode.
+Clicking the icon again while the menu is open closes it.
+
+Opening the tray menu activates the app, because that is the only arrangement
+confirmed on macOS 27 to both open the menu and let its items fire. The cost:
+if the main window is already open, it comes forward with the menu. A window
+parked in the menu bar stays parked. The alternatives, and why each was ruled
+out, are in `_popup_tray_menu`'s docstring in `app/ui_main.py`; in short, Qt's
+native `setContextMenu` aborts the process on macOS 27 (an exception the crash
+guard below cannot catch), and a menu shown without activation either never
+opens or opens with dead items.
 
 **Start at login** writes a separate LaunchAgent
 (`~/Library/LaunchAgents/com.wwds-dev.git-autosync-login.plist`) that starts
@@ -450,7 +498,10 @@ python -m app.main
 ```
 
 Installs to `/Applications/git_autosync.app`. The script deletes `build/` and
-`dist/` after installing so Spotlight never indexes a second copy.
+`dist/` after installing so Spotlight never indexes a second copy. If something
+is briefly holding a file there, it retries once and then prints
+`Note: could not clear build/ and dist/ — harmless, the app is installed.`
+That note is not a failed build; the last lines confirm the install.
 
 The app is ad-hoc signed (`codesign --force --deep -s -`), so the first launch
 needs right-click → Open (no Apple Developer ID / notarization yet).

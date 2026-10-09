@@ -36,6 +36,10 @@ Status: `IDEA` · `CONSIDERING` · `PLANNED` · `DONE` · `REJECTED`
 | Hiding to the menu bar survives tray clicks and app activation; a login start has no Dock icon | Oct 2026 |
 | Repo table packs left with banded rows; tray menu readable in Dark Mode | Oct 2026 |
 | ⌘Q parks the window the way the red button does; a push-only dry-run reports behind-remote; Quit stops claiming it stops scheduled syncs | Oct 2026 |
+| Problems dialog after a run: one card per failed repo with the cause and its fix (Fix leak…, Pull, Create GitHub Repo…, Remove from list) | Oct 2026 |
+| Leak triage text phrased as two conditional choices naming their buttons; rotation before history rewrite; dialog buttons no longer clipped | Oct 2026 |
+| Manage allowlist shows File / Line / Rule / Commit instead of truncated fingerprints | Oct 2026 |
+| Second click on the tray icon dismisses the menu; build script no longer prints a false-alarm cleanup error | Oct 2026 |
 
 ## Rejected
 
