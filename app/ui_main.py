@@ -35,7 +35,8 @@ from . import config, leak_triage, login_item, paths, repo_state, scheduler, ver
 from .create_repo_dialog import CreateRepoDialog
 from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
-from .macos_dock import activate_app, set_dock_icon_visible
+from .macos_dock import (activate_app, deactivate_app, set_dock_icon_visible,
+                         window_order_back, window_order_out)
 from . import repo_row
 from . import diverged
 from .problem_advice import collect as collect_advice
@@ -1643,8 +1644,8 @@ class MainWindow(QMainWindow):
         - non-activating QNSPanel without activation: menu opens but items do
           not respond.
 
-        The cost is that activating raises the main window when it is open;
-        that is undone below by lowering it again. A window parked in the menu bar stays parked —
+        Activation would raise an open window; see below for how that is
+        avoided. A window parked in the menu bar stays parked —
         _DockActivateFilter ignores activation while hidden_to_tray is set.
         """
         menu = getattr(self, "_tray_menu", None)
@@ -1653,20 +1654,30 @@ class MainWindow(QMainWindow):
         if menu.isVisible():
             menu.hide()          # a second click on the icon dismisses it
             return
-        # Activation is unavoidable (see above) but it raises an open window
-        # over whatever the user is working in, and all they asked for was the
-        # menu. If the app was in the background and a window is up, send that
-        # window back down again once the app is active. Skipped when the app
-        # was already in front: then the window was already where they left it.
+        # Activation is unavoidable (see above), but it drags an open window
+        # to the front — with Stage Manager, its whole stage — and all the
+        # user asked for was the menu. Lowering the window afterwards does not
+        # work: activation lands later, and the stage has already switched.
+        # So when the app was in the background, take the window off screen
+        # before activating, and afterwards put it back behind everything and
+        # hand focus back. Not when the app was already in front: then the
+        # window is already where the user left it.
         was_active = QApplication.applicationState() == Qt.ApplicationActive
-        window_open = self.isVisible()
+        park = self.isVisible() and not was_active
+        win_id = int(self.winId()) if park else 0
+        self._tray_opened_window = False
         try:
+            if park:
+                window_order_out(win_id)
             activate_app()
-            if window_open and not was_active:
-                self.lower()
             menu.exec(QCursor.pos())
         except Exception as exc:          # never let the tray take the app down
             print(f"tray menu failed to open: {exc}")
+        finally:
+            # "Open git_autosync" fronts the window on purpose; leave it be.
+            if park and not self._tray_opened_window:
+                window_order_back(win_id)
+                deactivate_app()
 
     def _show_tray_hint(self):
         """Say what happened — a quit that visibly does nothing reads as a hang."""
@@ -1684,6 +1695,7 @@ class MainWindow(QMainWindow):
         # First, or the raise below does nothing: an accessory app can't take
         # focus until its activation policy is back to Regular.
         self.hidden_to_tray = False
+        self._tray_opened_window = True   # _popup_tray_menu must not park it again
         set_dock_icon_visible(True)
         self.show()
         self.raise_()

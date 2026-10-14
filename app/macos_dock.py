@@ -127,3 +127,65 @@ def set_dock_icon_visible(visible: bool) -> bool:
             ns_app, _objc.sel_registerName(b"setActivationPolicy:"), policy))
     except Exception:
         return False
+
+
+def _ns_window(win_id: int):
+    """The NSWindow behind a QWidget.winId() (an NSView*), or None."""
+    if _objc is None or not win_id:
+        return None
+    send_id = ctypes.cast(
+        _objc.objc_msgSend,
+        ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
+    return send_id(ctypes.c_void_p(win_id), _objc.sel_registerName(b"window"))
+
+
+def _send_void(target, selector: bytes) -> bool:
+    if _objc is None or not target:
+        return False
+    try:
+        send = ctypes.cast(
+            _objc.objc_msgSend,
+            ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
+        send(ctypes.c_void_p(target), _objc.sel_registerName(selector), None)
+        return True
+    except Exception:
+        return False
+
+
+def _ns_app():
+    if _objc is None:
+        return None
+    send_id = ctypes.cast(
+        _objc.objc_msgSend,
+        ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
+    return send_id(_objc.objc_getClass(b"NSApplication"),
+                   _objc.sel_registerName(b"sharedApplication"))
+
+
+def window_order_out(win_id: int) -> bool:
+    """Take a window off screen without Qt knowing (it still counts as visible).
+
+    Used around the tray menu: activating the app — which the menu needs —
+    otherwise drags every open window, and with Stage Manager its whole stage,
+    to the front.
+    """
+    try:
+        return _send_void(_ns_window(win_id), b"orderOut:")
+    except Exception:
+        return False
+
+
+def window_order_back(win_id: int) -> bool:
+    """Put a window back on screen behind every other window."""
+    try:
+        return _send_void(_ns_window(win_id), b"orderBack:")
+    except Exception:
+        return False
+
+
+def deactivate_app() -> bool:
+    """Give up being the active app, so the one the user was in gets focus back."""
+    try:
+        return _send_void(_ns_app(), b"deactivate")
+    except Exception:
+        return False
