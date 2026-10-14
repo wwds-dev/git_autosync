@@ -188,3 +188,56 @@ def test_divergence_none_without_branch_or_upstream(diverged):
     assert divergence("git", mine) is None
     git(mine, "checkout", "-q", "-b", "local-only")
     assert divergence("git", mine) is None
+
+
+def _unlinked(tmp_path, local_behind=0, local_ahead=0):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(remote)], check=True)
+    seed = _clone(remote, tmp_path / "seed")
+    _commit(seed, "a.txt", "a\n", "a")
+    git(seed, "push", "-q", "origin", "HEAD:main")
+    mine = _clone(remote, tmp_path / "mine")
+    for i in range(local_ahead):
+        _commit(mine, f"m{i}.txt", "m\n", f"m{i}")
+    for i in range(local_behind):
+        _commit(seed, f"s{i}.txt", "s\n", f"s{i}")
+    if local_behind:
+        git(seed, "push", "-q", "origin", "HEAD:main")
+    git(mine, "branch", "--unset-upstream")
+    return mine
+
+
+def test_link_sets_upstream_without_touching_anything(tmp_path):
+    from app.diverged import link_to_origin
+    mine = _unlinked(tmp_path)
+    before = _snapshot(mine)
+    res = link_to_origin("git", mine)
+    assert res.ok and (res.ahead, res.behind) == (0, 0)
+    assert git(mine, "rev-parse", "--abbrev-ref", "@{u}") == "origin/main"
+    assert _snapshot(mine) == before
+
+
+def test_link_reports_ahead_and_behind_and_changes_no_commits(tmp_path):
+    from app.diverged import link_to_origin
+    mine = _unlinked(tmp_path / "x", local_behind=2, local_ahead=1)
+    head = git(mine, "rev-parse", "HEAD")
+    res = link_to_origin("git", mine)
+    assert res.ok and (res.ahead, res.behind) == (1, 2)
+    assert git(mine, "rev-parse", "HEAD") == head
+
+
+def test_link_refuses_a_branch_github_does_not_have(tmp_path):
+    from app.diverged import link_to_origin
+    mine = _unlinked(tmp_path)
+    git(mine, "checkout", "-q", "-b", "brand-new")
+    res = link_to_origin("git", mine)
+    assert not res.ok and "no branch" in res.message
+    assert subprocess.run(["git", "-C", str(mine), "rev-parse", "@{u}"],
+                          capture_output=True).returncode != 0
+
+
+def test_link_refuses_detached_head(tmp_path):
+    from app.diverged import link_to_origin
+    mine = _unlinked(tmp_path)
+    git(mine, "checkout", "-q", "--detach")
+    assert not link_to_origin("git", mine).ok

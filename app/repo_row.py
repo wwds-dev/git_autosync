@@ -1,5 +1,6 @@
 """A single row in the repo list with checkbox, status badge, time label, and actions."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget,
 )
@@ -38,6 +39,7 @@ class RepoRow(QWidget):
         self.name = name
         self._status = None
         self._missing = False
+        self.github_url: str | None = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(*ROW_MARGINS)
@@ -69,6 +71,7 @@ class RepoRow(QWidget):
         self.label.setTextFormat(Qt.RichText)
         self.label.setText(self._name_markup(name))
         self.label.setToolTip(name)
+        self.label.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
         self.label.setFixedWidth(NAME_W)
         self.label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         layout.addWidget(self.label)
@@ -151,18 +154,31 @@ class RepoRow(QWidget):
         # left and the name stays next to its own buttons on a wide window.
         layout.addStretch(1)
 
+    def _markup(self) -> str:
+        return self._name_markup(self.name, self.github_url)
+
+    def set_github_url(self, url: str | None):
+        """Show a ↗ link to the repo's GitHub page after its name, or none."""
+        self.github_url = url
+        if not self._missing:
+            self.label.setText(self._markup())
+            self.label.setToolTip(f"{self.name}\n{url}" if url else self.name)
+
     @staticmethod
-    def _name_markup(entry: str) -> str:
+    def _name_markup(entry: str, url: str | None = None) -> str:
         """Repo name in front, the folders it sits in behind it in grey.
 
         A nested entry like "sonar/sonar/macro" is otherwise read as one long
         string, and the doubled segment (repo dir + package dir of the same
-        name) looks like a bug rather than a real path.
+        name) looks like a bug rather than a real path. The optional ↗ opens
+        the repo on GitHub; it sits right after the name so no column moves.
         """
         parent, _, base = entry.rstrip("/").rpartition("/")
+        link = (f"&nbsp;<a href='{url}' style='color:#0A66C2; text-decoration:none;'>↗</a>"
+                if url else "")
         if not parent:
-            return f"<b>{base}</b>"
-        return (f"<b>{base}</b>"
+            return f"<b>{base}</b>{link}"
+        return (f"<b>{base}</b>{link}"
                 f"<span style='color:#9A9AA0;'>&nbsp;&nbsp;{parent}/</span>")
 
     # ── public API ────────────────────────────────────────────────
@@ -261,7 +277,7 @@ class RepoRow(QWidget):
             self.remove_btn.setEnabled(True)
         else:
             self.remove_btn.setVisible(False)
-            self.label.setText(self._name_markup(self.name))
+            self.label.setText(self._markup())
             self.label.setStyleSheet("")
             self.setToolTip("")
             self.checkbox.setEnabled(True)

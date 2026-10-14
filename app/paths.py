@@ -187,7 +187,7 @@ def repo_slug(name: str) -> str | None:
     import subprocess
 
     git = find_git() or "git"
-    path = lab_active_dir() / name
+    path = resolve_entry(name)
     try:
         r = subprocess.run(
             [git, "-C", str(path), "remote", "get-url", "origin"],
@@ -200,6 +200,12 @@ def repo_slug(name: str) -> str | None:
     url = r.stdout.strip()
     m = re.search(r"github\.com[:/]+([^/]+)/(.+?)(?:\.git)?/?$", url)
     return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def repo_github_url(entry: str) -> str | None:
+    """https://github.com/owner/repo for an entry whose origin is on GitHub."""
+    slug = repo_slug(entry)
+    return f"https://github.com/{slug}" if slug else None
 
 
 def subprocess_run(cmd: list[str]) -> int:

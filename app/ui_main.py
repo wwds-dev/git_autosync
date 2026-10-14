@@ -443,6 +443,8 @@ class MainWindow(QMainWindow):
                           on_allowlist=self._on_allowlist_single,
                           on_remove=self._on_remove_entry,
                           on_pull=self._on_pull)
+            if name not in no_remote:
+                row.set_github_url(paths.repo_github_url(name))
             self._apply_time(row, name)
             item = QListWidgetItem()
             # Width 0 lets the item span the viewport instead of stopping at the
@@ -654,6 +656,7 @@ class MainWindow(QMainWindow):
         handlers = {
             "leak": self._on_open_ignore,
             "pull": self._on_pull,
+            "link": self._on_link,
             "remove": self._on_remove_entry,
         }
         if action == "create_repo":
@@ -906,6 +909,38 @@ class MainWindow(QMainWindow):
         # _run clears the pane, so this lands after it (or alone, if the
         # sync was cancelled) — either way the rewrite stays on record.
         self._append_output(record)
+
+    def _on_link(self, name: str):
+        """Link a repo's branch to origin, then catch up if GitHub is ahead."""
+        git = paths.find_git() or "git"
+        path = paths.resolve_entry(name)
+        try:
+            res = diverged.link_to_origin(git, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Link failed", f"{name}\n\n{exc}")
+            return
+        if not res.ok:
+            QMessageBox.warning(self, "Not linked", f"'{name}'\n\n{res.message}")
+            return
+        self._append_output(f"Linked {name}: {res.message}\n")
+        if res.behind and res.ahead:
+            QMessageBox.information(
+                self, "Linked — but diverged",
+                f"{res.message}\n\nYou have {res.ahead} commit(s) GitHub does not, and "
+                f"GitHub has {res.behind} you do not. The next step shows your options.")
+            self._on_pull(name)
+            return
+        if res.behind:
+            ok, msg = self._pull_one(name)
+            if not ok:
+                QMessageBox.warning(self, "Linked, not caught up", f"{res.message}\n\n{msg}")
+                return
+            tail = f"Fast-forwarded {res.behind} commit(s) from GitHub."
+        elif res.ahead:
+            tail = f"You are {res.ahead} commit(s) ahead; the next sync pushes them."
+        else:
+            tail = "Level with GitHub."
+        QMessageBox.information(self, "Linked", f"{res.message}\n\n{tail}")
 
     def _on_remove_entry(self, name: str):
         """Drop one entry from the list. Touches the list only."""

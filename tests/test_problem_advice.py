@@ -126,3 +126,9 @@ def test_malformed_entry_is_shown_rather_than_dropped():
     p = parse_fingerprint("not-a-fingerprint")
     assert p["file"] == "not-a-fingerprint"
     assert p["raw"] == "not-a-fingerprint"
+
+
+def test_unpublished_branch_offers_link_to_origin():
+    from app.problem_advice import advise
+    adv = advise("imprint", "SKIP", "push-only: 'main' is unpublished")
+    assert adv.action == "link" and adv.action_label == "Link to origin"

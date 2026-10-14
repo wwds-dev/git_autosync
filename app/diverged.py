@@ -112,3 +112,40 @@ def rebase_onto_remote(git: str, path: Path, timeout: int = 600) -> RebaseResult
         abort_failed = a.returncode != 0 or _rebase_in_progress(git, path)
     return RebaseResult(ok=False, output=out.strip(), conflicts=conflicts,
                         abort_failed=abort_failed)
+
+
+@dataclass
+class LinkResult:
+    ok: bool
+    message: str
+    ahead: int = 0
+    behind: int = 0
+
+
+def link_to_origin(git: str, path: Path) -> LinkResult:
+    """Point the current branch at the same-named branch on origin.
+
+    Only a config change plus a fetch: nothing is pushed and the working tree
+    is untouched. Refuses when GitHub has no such branch, because publishing a
+    brand-new branch is a decision push-only mode deliberately leaves to the
+    user.
+    """
+    branch = _git(git, path, "branch", "--show-current").stdout.strip()
+    if not branch:
+        return LinkResult(False, "This checkout is not on a branch (detached HEAD).")
+    remote = _git(git, path, "ls-remote", "--heads", "origin", branch, timeout=60)
+    if remote.returncode != 0:
+        return LinkResult(False, "Could not reach GitHub: "
+                          + (remote.stderr or remote.stdout).strip()[-300:])
+    if not remote.stdout.strip():
+        return LinkResult(False, f"GitHub has no branch '{branch}' yet. Publishing a new "
+                                 "branch is left to you, so nothing was changed.")
+    fetch = _git(git, path, "fetch", "origin", branch)
+    if fetch.returncode != 0:
+        return LinkResult(False, "Fetch failed: " + (fetch.stderr or fetch.stdout).strip()[-300:])
+    set_up = _git(git, path, "branch", f"--set-upstream-to=origin/{branch}", branch)
+    if set_up.returncode != 0:
+        return LinkResult(False, (set_up.stderr or set_up.stdout).strip()[-300:])
+    ahead = _count(git, path, "@{u}..HEAD") or 0
+    behind = _count(git, path, "HEAD..@{u}") or 0
+    return LinkResult(True, f"'{branch}' now tracks origin/{branch}.", ahead, behind)

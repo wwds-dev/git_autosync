@@ -18,7 +18,7 @@ class Advice:
     headline: str
     explanation: str
     action_label: str | None = None
-    action: str | None = None        # "leak" | "pull" | "create_repo" | "remove" | None
+    action: str | None = None        # "leak" | "pull" | "link" | "create_repo" | "remove" | None
 
 
 def advise(name: str, status: str, detail: str) -> Advice | None:
@@ -112,6 +112,17 @@ def advise(name: str, status: str, detail: str) -> Advice | None:
                 "moved or deleted.\n\nUse 'Find repos…' to fix the path or "
                 "drop the entry.",
                 "Remove from list", "remove")
+        if "is unpublished" in d:
+            return Advice(
+                name,
+                f"{name} — this branch is not linked to GitHub",
+                "The branch may well be on GitHub already, but this checkout "
+                "does not know which remote branch it belongs to, so push-only "
+                "mode will not guess where to push.\n\n"
+                "Link to origin connects it to the same-named branch on GitHub "
+                "(only if GitHub already has it), and fast-forwards if GitHub "
+                "is ahead. Nothing is pushed, and local work is never touched.",
+                "Link to origin", "link")
         return Advice(name, f"{name} — skipped", detail or "Skipped.", None, None)
 
     return None
