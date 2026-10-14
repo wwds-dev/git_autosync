@@ -4,3 +4,10 @@
 {"ts": "2026-10-14T01:30:57", "phase": "verify", "state": "done", "spec": "diverged-rebase-button"}
 {"ts": "2026-10-14T01:31:47", "phase": "release", "state": "start", "spec": "diverged-rebase-button"}
 {"ts": "2026-10-14T01:33:14", "phase": "release", "state": "done", "spec": "diverged-rebase-button"}
+{"ts": "2026-10-14T02:28:46", "phase": "define", "state": "start", "spec": "tray-menu-only"}
+{"ts": "2026-10-14T02:29:17", "phase": "define", "state": "blocked", "spec": "tray-menu-only"}
+{"ts": "2026-10-14T02:31:16", "phase": "build", "state": "start", "spec": "tray-menu-only"}
+{"ts": "2026-10-14T02:41:12", "phase": "build", "state": "done", "spec": "tray-menu-only"}
+{"ts": "2026-10-14T02:41:12", "phase": "review", "state": "start", "spec": "tray-menu-only"}
+{"ts": "2026-10-14T02:49:29", "phase": "review", "state": "done", "spec": "tray-menu-only"}
+{"ts": "2026-10-14T02:49:30", "phase": "verify", "state": "done", "spec": "tray-menu-only"}

@@ -30,7 +30,9 @@ QListWidget::item:alternate {{ background: #EFEFF4; }}
 /* The global QWidget rule paints near-black text on every widget. A popup
    menu is drawn on the system surface, which is dark in Dark Mode, so the
    text disappeared into it. This app is light-themed throughout, so the menu
-   paints its own surface instead of inheriting the system's. */
+   paints its own surface instead of inheriting the system's. The tray menu is
+   native and ignores this; it still styles Qt-drawn menus such as a text
+   field's right-click menu, so it is not dead. */
 QMenu {{
     background: #FFFFFF;
     color: #1D1D1F;

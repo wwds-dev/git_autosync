@@ -140,3 +140,20 @@ as the active app:
 - Suite: 100 passed. Mutations caught: `activated` connected, no activation in
   Open, a mouse type dropped from the guard, a guard that always calls the
   original, and the guard not installed in `main()`.
+
+**Short of the success measure:** the spec asked for 20 clicks with the window
+hidden; 6 were run (4 after the red button, 2 after Cmd+Q). **Sync now** and
+**Start at login** were not clicked; they use the same native-menu path as
+Dry-run.
+
+## Review (2026-10-14)
+
+`docs/audit/tray-menu-only-review.md`: no P0, P1 or P2 findings.
+
+- **Fixed:** F1 (the install check is now AST-based, so a commented-out call
+  fails it), F2 (the control test requires SIGABRT and `clickCount` in stderr),
+  F3 (the Open test pins the full call order), F4 (the tray test restores
+  `quitOnLastWindowClosed` and deletes its tray), F6 (these numbers), and F7 (the
+  contrast test is renamed and the `QMenu` style comment updated).
+- **Deferred to TODO:** F5 (relaunch while hidden; predates this change, owner's
+  call) and F8 (`--selftest`).

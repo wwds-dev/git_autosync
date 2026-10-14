@@ -34,9 +34,10 @@ def test_header_labels_are_not_clipped(window):
     assert not clipped, f"header labels clipped: {clipped}"
 
 
-def test_tray_menu_text_contrasts_with_its_background():
-    """The global `QWidget { color: #1D1D1F }` rule also hits popup menus, which
-    macOS draws on the system surface — dark in Dark Mode, giving 1.3:1 and an
+def test_popup_menu_text_contrasts_with_its_background():
+    """The global `QWidget { color: #1D1D1F }` rule also hits Qt-drawn popup
+    menus (a text field's right-click menu; the tray menu is native now and
+    ignores the stylesheet), which macOS draws on the system surface — dark in Dark Mode, giving 1.3:1 and an
     unreadable menu. The stylesheet must paint the menu's own background."""
     from collections import Counter
     from PySide6.QtGui import QColor
@@ -234,6 +235,8 @@ def test_the_tray_uses_the_native_menu_and_no_click_handler(window, monkeypatch)
     monkeypatch.setattr(QtWidgets.QSystemTrayIcon, "isSystemTrayAvailable",
                         staticmethod(lambda: True))
     saved = window._tray
+    app = QtWidgets.QApplication.instance()
+    quit_on_close = app.quitOnLastWindowClosed()
     try:
         window._setup_tray()
         tray = window._tray
@@ -245,9 +248,12 @@ def test_the_tray_uses_the_native_menu_and_no_click_handler(window, monkeypatch)
                           "Start at login", "Quit"]
     finally:
         window._tray_timer.stop()
-        if window._tray is not None:
+        if window._tray is not None and window._tray is not saved:
             window._tray.hide()
+            window._tray.deleteLater()
+        window._tray_menu.deleteLater()
         window._tray = saved
+        app.setQuitOnLastWindowClosed(quit_on_close)
 
 
 def test_open_from_the_tray_menu_shows_and_activates(parked, monkeypatch):
@@ -265,8 +271,14 @@ def test_open_from_the_tray_menu_shows_and_activates(parked, monkeypatch):
     monkeypatch.setattr(ui, "activate_app", lambda: calls.append("activate") or True)
     monkeypatch.setattr(ui, "set_dock_icon_visible",
                         lambda v: calls.append(f"dock={v}") or True)
+    for name in ("show", "raise_", "activateWindow"):
+        real = getattr(window, name)
+        monkeypatch.setattr(window, name,
+                            lambda real=real, name=name: (calls.append(name), real())[1])
     window._tray_open()
     _pump(app)
 
     assert window.isVisible() and not window.hidden_to_tray
-    assert calls == ["dock=True", "activate"]
+    # Dock tile first (an Accessory app cannot take focus), the app activated
+    # after the window exists and before it is asked to take focus.
+    assert calls == ["dock=True", "show", "raise_", "activate", "activateWindow"]

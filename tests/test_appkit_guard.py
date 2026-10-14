@@ -9,6 +9,8 @@ runtime; a mock of AppKit would be a mock of the thing being tested.
 The crash case runs in a subprocess: unguarded, it terminates the interpreter,
 which would take the whole test session with it rather than fail one test.
 """
+import ast
+import signal
 import subprocess
 import sys
 import textwrap
@@ -75,7 +77,9 @@ def test_unguarded_a_non_mouse_click_count_is_the_crash():
     below passing means something."""
     r = _probe(install=False)
     assert "mouse 2" in r.stdout
-    assert "other" not in r.stdout and r.returncode != 0
+    assert "other" not in r.stdout
+    assert r.returncode == -signal.SIGABRT, (r.returncode, r.stderr[-500:])
+    assert "clickCount" in r.stderr
 
 
 def test_guarded_a_non_mouse_event_answers_zero_and_a_click_keeps_its_count():
@@ -96,10 +100,18 @@ def test_installing_twice_is_harmless():
 
 def test_main_installs_the_guard_before_the_application_exists():
     """Without it, the first click on the dot can abort the app."""
-    src = (REPO / "app" / "main.py").read_text()
-    body = src[src.index("def main():"):]
-    assert "appkit_guard.install()" in body
-    assert body.index("appkit_guard.install()") < body.index("_App(sys.argv)")
+    tree = ast.parse((REPO / "app" / "main.py").read_text())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def first_line(match):
+        lines = [n.lineno for n in ast.walk(main)
+                 if isinstance(n, ast.Call) and match(ast.unparse(n.func))]
+        return min(lines) if lines else None
+
+    guard = first_line(lambda f: f == "appkit_guard.install")
+    app = first_line(lambda f: f == "_App")
+    assert guard is not None, "main() never calls appkit_guard.install()"
+    assert app is not None and guard < app
 
 
 def _code(path: Path) -> str:
