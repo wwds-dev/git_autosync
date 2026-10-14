@@ -1,0 +1,4 @@
+{"ts": "2026-10-14T01:15:48", "phase": "build", "state": "start", "spec": "diverged-rebase-button"}
+{"ts": "2026-10-14T01:30:56", "phase": "build", "state": "done", "spec": "diverged-rebase-button"}
+{"ts": "2026-10-14T01:30:56", "phase": "review", "state": "done", "spec": "diverged-rebase-button"}
+{"ts": "2026-10-14T01:30:57", "phase": "verify", "state": "done", "spec": "diverged-rebase-button"}

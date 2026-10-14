@@ -155,6 +155,15 @@ process_repo(){
     fi
   fi
 
+  # A conflict left unresolved (by a rebase, merge or stash pop) must never be
+  # swept: `git add -A` marks the files resolved, conflict markers and all.
+  local gd; gd="$(git rev-parse --git-dir 2>/dev/null)"
+  if [ -n "$(git ls-files -u 2>/dev/null)" ] || [ -d "$gd/rebase-merge" ] \
+     || [ -d "$gd/rebase-apply" ] || [ -f "$gd/MERGE_HEAD" ]; then
+    log "  ERROR: unresolved conflict or rebase/merge in progress - resolve it first"
+    SUMMARY+=("ERROR   $label  (unresolved conflict - resolve it first)"); N_ERR=$((N_ERR+1)); return
+  fi
+
   if [ "$mode" = "push-only" ]; then
     log "  mode: push-only (working tree left alone)"
   else

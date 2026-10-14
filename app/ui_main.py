@@ -37,6 +37,7 @@ from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
 from .macos_dock import activate_app, set_dock_icon_visible
 from . import repo_row
+from . import diverged
 from .problem_advice import collect as collect_advice
 from .problems_dialog import ProblemsDialog
 from .repo_row import RepoRow
@@ -125,6 +126,12 @@ def _fit_message_box_buttons(box) -> None:
     for button in box.buttons():
         needed = button.fontMetrics().horizontalAdvance(button.text())
         button.setMinimumWidth(needed + 34)   # padding + a little breathing room
+
+
+def _git_dirty(git: str, path) -> bool:
+    r = subprocess.run([git, "-C", str(path), "status", "--porcelain"],
+                       capture_output=True, text=True)
+    return bool(r.stdout.strip())
 
 
 def _format_git_status(raw: str) -> str:
@@ -782,18 +789,123 @@ class MainWindow(QMainWindow):
                 self._apply_time(row, name)
             return
 
-        # ff-only refuses when both sides have commits. That needs a decision
-        # this app should not make silently.
-        ahead = subprocess.run([git, "-C", str(path), "rev-list", "--count", "@{u}..HEAD"],
-                               capture_output=True, text=True).stdout.strip() or "?"
-        QMessageBox.warning(
-            self, "Cannot fast-forward",
-            f"'{name}' has diverged: {ahead} local commit(s) the remote does not "
-            f"have, and commits on the remote you do not have. A fast-forward "
-            f"would lose one side, so nothing was changed.\n\n"
-            f"Resolve it yourself, in that repo:\n"
-            f"    git -C \"{path}\" pull --rebase\n\n"
-            f"git said:\n{out[-500:]}")
+        # ff-only refuses when both sides have commits. Rebasing is offered,
+        # not done silently: it rewrites the local commits' ids. Offered only
+        # for a plain divergence; any other refusal (no branch, no upstream,
+        # network, local edits in the way) is shown as git's own error.
+        div = diverged.divergence(git, path)
+        if div is None or div.ahead == 0 or div.behind == 0:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Pull failed")
+            box.setText(f"'{name}' could not be fast-forwarded")
+            box.setInformativeText("Nothing was changed. See the details for git's reason.")
+            box.setDetailedText(out[-1500:])
+            _fit_message_box_buttons(box)
+            box.exec()
+            return
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Cannot fast-forward")
+        box.setText(f"'{name}' has diverged from GitHub")
+        info = (f"You have {div.ahead} commit(s) GitHub does not, and GitHub has "
+                f"{div.behind} you do not. Nothing was changed.")
+        can_fix = div.merges == 0 and bool(paths.find_gitleaks())
+        if div.merges:
+            info += ("\n\nYour side contains merge commits, which a rebase would "
+                     "flatten, so this needs resolving by hand.")
+        elif not paths.find_gitleaks():
+            info += "\n\nInstall gitleaks to let git_autosync rebase and push this for you."
+        else:
+            info += ("\n\nRebase and sync puts your commits on top of GitHub's, then "
+                     "syncs the repo (leak gate first). If the commits conflict, the "
+                     "rebase undoes itself and nothing changes. If only uncommitted "
+                     "edits clash, they are kept in the stash and you are told which "
+                     "files to fix; nothing is pushed.")
+        box.setInformativeText(info)
+        box.setDetailedText(
+            f"To do it by hand:\n  git -C \"{path}\" pull --rebase\n\n"
+            f"git said:\n{out[-1500:]}")
+        fix_btn = box.addButton("Rebase and sync", QMessageBox.AcceptRole) if can_fix else None
+        cancel_btn = box.addButton(QMessageBox.Cancel if can_fix else QMessageBox.Ok)
+        box.setDefaultButton(cancel_btn)   # Return must not rewrite history
+        _fit_message_box_buttons(box)
+        box.exec()
+        if fix_btn is not None and box.clickedButton() == fix_btn:
+            self._rebase_and_sync(name, path)
+
+    def _rebase_and_sync(self, name: str, path: Path):
+        """Rebase onto the remote (all or nothing), then sync via the engine."""
+        if self.runner.is_running():
+            QMessageBox.information(self, "Sync in progress",
+                                    "Wait for the current run to finish, then try again.")
+            return
+        git = paths.find_git() or "git"
+        try:
+            result = diverged.rebase_onto_remote(git, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Rebase failed", f"{name}\n\n{exc}")
+            return
+        record = f"Rebase {name}:\n{result.output}\n"
+
+        if not result.ok:
+            self._append_output(record)
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Rebase undone")
+            if result.abort_failed:
+                box.setWindowTitle("Rebase stuck")
+                box.setText(f"'{name}' is left mid-rebase")
+                box.setInformativeText(
+                    "The rebase failed and could not be undone automatically. In that "
+                    f"repo run  git rebase --abort , or finish it by hand.")
+            elif result.conflicts:
+                box.setText(f"'{name}' could not be rebased — nothing changed")
+                box.setInformativeText(
+                    "Your commits and GitHub's change the same lines in:\n  "
+                    + "\n  ".join(result.conflicts[:15])
+                    + ("\n  …" if len(result.conflicts) > 15 else "")
+                    + "\n\nThe rebase was undone, so the repo is exactly as before. "
+                      "These need merging by hand.")
+            else:
+                box.setText(f"'{name}' could not be rebased — nothing changed")
+                box.setInformativeText("git stopped before finishing and the repo is "
+                                       "exactly as before. See the details for why.")
+            box.setDetailedText(result.output[-1500:])
+            _fit_message_box_buttons(box)
+            box.exec()
+            return
+
+        self._behind.discard(name)
+        row = self._row_widgets.get(name)
+        if row:
+            row.set_behind(False)
+
+        if result.stash_conflict:
+            self._append_output(record)
+            files = "\n  ".join(result.conflicts[:15]) or "(see git status)"
+            QMessageBox.warning(
+                self, "Rebased, not synced",
+                f"'{name}' is rebased, but your uncommitted changes clash with "
+                f"GitHub's in:\n  {files}\n\nThose files now contain conflict "
+                f"markers, and a copy of your changes is kept in the stash. Either "
+                f"fix the files and run  git stash drop , or run  git reset --hard  "
+                f"then  git stash pop  to get back your edits on the new base.\n\n"
+                f"Nothing was pushed.")
+            return
+
+        dirty = _git_dirty(git, path)
+        if dirty and not config.is_push_only(self.config_path, name):
+            # A sweep would also commit the working tree: same preview and
+            # confirmation as any other single-repo sync. Cancelling there
+            # leaves the repo rebased; the next sync pushes it.
+            self._on_sync_single(name)
+        else:
+            self._run(dry_run=False, repo=name)
+        # _run clears the pane, so this lands after it (or alone, if the
+        # sync was cancelled) — either way the rewrite stays on record.
+        self._append_output(record)
 
     def _on_remove_entry(self, name: str):
         """Drop one entry from the list. Touches the list only."""

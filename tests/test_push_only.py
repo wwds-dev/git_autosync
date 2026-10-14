@@ -245,3 +245,43 @@ class TestADryRunRefusesToCallABehindRepoSafe:
 
         assert "would push 1 commit(s), push-only" in result.stdout
         assert "pull first" not in result.stdout
+
+
+class TestUnresolvedConflictIsNeverSwept:
+    """`git add -A` on unmerged files marks them resolved, markers and all."""
+
+    def _conflict(self, repo: Path):
+        git(repo, "checkout", "-qb", "other")
+        (repo / "README.md").write_text("other\n")
+        git(repo, "commit", "-qam", "other")
+        git(repo, "checkout", "-q", "main")
+        (repo / "README.md").write_text("main\n")
+        git(repo, "commit", "-qam", "main")
+        subprocess.run(["git", "-C", str(repo), "merge", "-q", "other"],
+                       capture_output=True)   # conflicts, leaves MERGE_HEAD
+
+    def _stash_conflict(self, repo: Path):
+        """Unmerged files with no MERGE_HEAD: what a clashing autostash leaves."""
+        (repo / "README.md").write_text("stashed\n")
+        git(repo, "stash", "-q")
+        (repo / "README.md").write_text("committed\n")
+        git(repo, "commit", "-qam", "committed")
+        subprocess.run(["git", "-C", str(repo), "stash", "pop", "-q"],
+                       capture_output=True)
+
+    @pytest.mark.parametrize("config", ["proj\n", "proj  push-only\n"])
+    @pytest.mark.parametrize("make", ["_conflict", "_stash_conflict"])
+    def test_repo_with_conflict_is_skipped(self, workspace, config, make):
+        root, repo = workspace
+        getattr(self, make)(repo)
+        before = git(repo, "rev-parse", "HEAD")
+        remote_before = git(repo, "rev-parse", "origin/main")
+
+        result = run_engine(root, config)
+        _assert_engine_found_the_repo(result)
+
+        assert "unresolved conflict" in result.stdout
+        assert git(repo, "rev-parse", "HEAD") == before
+        git(repo, "fetch", "-q")
+        assert git(repo, "rev-parse", "origin/main") == remote_before
+        assert "UU README.md" in git(repo, "status", "--short")
