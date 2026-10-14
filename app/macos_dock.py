@@ -28,9 +28,9 @@ except Exception:
 def activate_app() -> bool:
     """Bring this app forward, ignoring which app is currently active.
 
-    A menu bar app is normally not the active app, and macOS gives an inactive
-    app's first click to activation rather than to the control under the
-    cursor — so the tray menu never opens without this.
+    Only when showing the window (launch, "Open git_autosync"): with Stage
+    Manager on, a window shown by an inactive app is filed into a background
+    stage. Never on a tray click — the menu opens without activation.
     """
     if _objc is None:
         return False
@@ -50,58 +50,6 @@ def activate_app() -> bool:
         return True
     except Exception:
         return False
-
-
-# NSWindowStyleMaskNonactivatingPanel. A panel carrying this takes mouse
-# events while its application is inactive, which is the whole point: the tray
-# menu can then be clicked without activating the app and dragging its window
-# forward.
-_NS_NONACTIVATING_PANEL = 1 << 7
-_NS_POPUP_MENU_LEVEL = 101
-
-
-def make_window_nonactivating(win_id: int) -> str:
-    """Turn a Qt popup's backing window into a non-activating panel.
-
-    `win_id` is what QWidget.winId() returns on macOS: an NSView*. Returns a
-    short description of what happened, for logging — this depends on Qt's
-    private window class, so it must fail visibly rather than silently.
-    """
-    if _objc is None or not win_id:
-        return "objc unavailable"
-    try:
-        send_id = ctypes.cast(
-            _objc.objc_msgSend,
-            ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
-        send_mask = ctypes.cast(
-            _objc.objc_msgSend,
-            ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p, ctypes.c_void_p))
-        set_mask = ctypes.cast(
-            _objc.objc_msgSend,
-            ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong))
-        set_level = ctypes.cast(
-            _objc.objc_msgSend,
-            ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long))
-
-        window = send_id(ctypes.c_void_p(win_id), _objc.sel_registerName(b"window"))
-        if not window:
-            return "no backing NSWindow yet"
-
-        _objc.object_getClassName.restype = ctypes.c_char_p
-        _objc.object_getClassName.argtypes = [ctypes.c_void_p]
-        cls = _objc.object_getClassName(ctypes.c_void_p(window)).decode()
-
-        before = send_mask(window, _objc.sel_registerName(b"styleMask"))
-        set_mask(window, _objc.sel_registerName(b"setStyleMask:"),
-                 before | _NS_NONACTIVATING_PANEL)
-        set_level(window, _objc.sel_registerName(b"setLevel:"), _NS_POPUP_MENU_LEVEL)
-        after = send_mask(window, _objc.sel_registerName(b"styleMask"))
-
-        applied = bool(after & _NS_NONACTIVATING_PANEL)
-        return (f"{cls}: styleMask {before} -> {after}, "
-                f"nonactivating {'ON' if applied else 'REFUSED'}")
-    except Exception as exc:
-        return f"failed: {exc}"
 
 
 def set_dock_icon_visible(visible: bool) -> bool:
@@ -125,67 +73,5 @@ def set_dock_icon_visible(visible: bool) -> bool:
                   else _NS_ACTIVATION_POLICY_ACCESSORY)
         return bool(send_policy(
             ns_app, _objc.sel_registerName(b"setActivationPolicy:"), policy))
-    except Exception:
-        return False
-
-
-def _ns_window(win_id: int):
-    """The NSWindow behind a QWidget.winId() (an NSView*), or None."""
-    if _objc is None or not win_id:
-        return None
-    send_id = ctypes.cast(
-        _objc.objc_msgSend,
-        ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
-    return send_id(ctypes.c_void_p(win_id), _objc.sel_registerName(b"window"))
-
-
-def _send_void(target, selector: bytes) -> bool:
-    if _objc is None or not target:
-        return False
-    try:
-        send = ctypes.cast(
-            _objc.objc_msgSend,
-            ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
-        send(ctypes.c_void_p(target), _objc.sel_registerName(selector), None)
-        return True
-    except Exception:
-        return False
-
-
-def _ns_app():
-    if _objc is None:
-        return None
-    send_id = ctypes.cast(
-        _objc.objc_msgSend,
-        ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
-    return send_id(_objc.objc_getClass(b"NSApplication"),
-                   _objc.sel_registerName(b"sharedApplication"))
-
-
-def window_order_out(win_id: int) -> bool:
-    """Take a window off screen without Qt knowing (it still counts as visible).
-
-    Used around the tray menu: activating the app — which the menu needs —
-    otherwise drags every open window, and with Stage Manager its whole stage,
-    to the front.
-    """
-    try:
-        return _send_void(_ns_window(win_id), b"orderOut:")
-    except Exception:
-        return False
-
-
-def window_order_back(win_id: int) -> bool:
-    """Put a window back on screen behind every other window."""
-    try:
-        return _send_void(_ns_window(win_id), b"orderBack:")
-    except Exception:
-        return False
-
-
-def deactivate_app() -> bool:
-    """Give up being the active app, so the one the user was in gets focus back."""
-    try:
-        return _send_void(_ns_app(), b"deactivate")
     except Exception:
         return False

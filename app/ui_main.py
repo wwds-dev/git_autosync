@@ -2,12 +2,11 @@
 import os
 import re
 import subprocess
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QFileSystemWatcher, QSize, QTimer
-from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -35,8 +34,7 @@ from . import config, leak_triage, login_item, paths, repo_state, scheduler, ver
 from .create_repo_dialog import CreateRepoDialog
 from .documentation_dialog import DocumentationDialog
 from .ignore_dialog import IgnoreDialog
-from .macos_dock import (activate_app, deactivate_app, set_dock_icon_visible,
-                         window_order_back, window_order_out)
+from .macos_dock import activate_app, set_dock_icon_visible
 from . import repo_row
 from . import diverged
 from .problem_advice import collect as collect_advice
@@ -174,10 +172,10 @@ class MainWindow(QMainWindow):
         # clear every other Pull button after one pull.
         self._behind: set[str] = set()
         self._tray_hint_shown = False
-        # True while the window is parked in the menu bar. Activation
-        # must not undo that — clicking the tray icon activates the app.
+        # True while the window is parked in the menu bar. An activation
+        # from elsewhere (Cmd-Tab, open -a) must not undo that; see
+        # _DockActivateFilter in main.py.
         self.hidden_to_tray = False
-        self._panel_style_logged = False
 
         self._build_ui()
         self._reload_repo_list()
@@ -1545,13 +1543,6 @@ class MainWindow(QMainWindow):
         # once _setup_tray returns, leaving the status item holding a freed C++
         # object.
         self._tray_menu = menu = QMenu(self)
-        # A click on the icon while the menu is open is consumed by the menu's
-        # own grab, which closes it — and the tray's activated signal then
-        # fires and reopens it. Note when it closed so that reopen can be
-        # suppressed; without this the second click looks like a no-op.
-        self._menu_closed_at = 0.0
-        menu.aboutToHide.connect(
-            lambda: setattr(self, "_menu_closed_at", time.monotonic()))
         menu.addAction("Open git_autosync", self._tray_open)
         menu.addSeparator()
         menu.addAction("Dry-run", lambda: self._run(dry_run=True))
@@ -1563,14 +1554,13 @@ class MainWindow(QMainWindow):
         login_action.toggled.connect(self._on_toggle_login_item)
         menu.addSeparator()
         menu.addAction("Quit", self._tray_quit)
-        # Not setContextMenu(): that hands the menu to AppKit, which opens it
-        # inside an NSMenuTrackingSession during event dispatch. Qt observes
-        # NSMenuDidBeginTracking and asks [NSApp currentEvent] for clickCount;
-        # on macOS 27 that event is not a mouse event there, the assertion
-        # raises an NSException, and it unwinds through libqcocoa's C++ frames
-        # into std::terminate — SIGABRT, no log. Showing the menu ourselves one
-        # event-loop turn later keeps it out of that callout.
-        self._tray.activated.connect(self._on_tray_activated)
+        # Native menu, as in Backup Control Center and Lab Hub: AppKit opens it
+        # without activating the app, so a click on the dot never brings the
+        # window or its Stage Manager stage forward. No `activated` handler on
+        # purpose — "Open git_autosync" is the only way to show the window.
+        # This used to abort on macOS 27 (-[NSEvent clickCount] raising inside
+        # NSMenuDidBeginTracking); appkit_guard, installed in main(), fixes it.
+        self._tray.setContextMenu(menu)
         self._tray.show()
 
         QApplication.instance().setQuitOnLastWindowClosed(False)
@@ -1612,73 +1602,6 @@ class MainWindow(QMainWindow):
         self._refresh_tray_icon()
         self._refresh_last_sync_label()
 
-    def _on_tray_activated(self, reason):
-        """Open the tray menu, but never from inside AppKit's callout.
-
-        Opening it here synchronously is what aborts the process (see
-        _setup_tray). Deferring to the next event-loop turn means the menu is
-        opened from Qt's own loop, after AppKit has finished dispatching the
-        click.
-        """
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.Context,
-                      QSystemTrayIcon.DoubleClick):
-            # The grab already closed the menu for us; reopening now would
-            # undo the user's dismiss.
-            if time.monotonic() - getattr(self, "_menu_closed_at", 0.0) < 0.35:
-                return
-            QTimer.singleShot(0, self._popup_tray_menu)
-
-    def _popup_tray_menu(self):
-        """Show the tray menu.
-
-        activate_app() is here because it is the only arrangement confirmed to
-        both open the menu and let its items fire. The alternatives were tried
-        and each failed on hardware:
-
-        - setContextMenu (native, no activation): aborts on macOS 27 from an
-          NSException in Qt's NSMenuDidBeginTracking observer. Two crash
-          reports, and the exception guard cannot catch it — it is raised in a
-          CoreFoundation callout, outside AppKit's try/catch.
-        - popup() without activation: menu never opens, because macOS spends an
-          inactive app's first click on activation.
-        - non-activating QNSPanel without activation: menu opens but items do
-          not respond.
-
-        Activation would raise an open window; see below for how that is
-        avoided. A window parked in the menu bar stays parked —
-        _DockActivateFilter ignores activation while hidden_to_tray is set.
-        """
-        menu = getattr(self, "_tray_menu", None)
-        if menu is None or self._tray is None:
-            return
-        if menu.isVisible():
-            menu.hide()          # a second click on the icon dismisses it
-            return
-        # Activation is unavoidable (see above), but it drags an open window
-        # to the front — with Stage Manager, its whole stage — and all the
-        # user asked for was the menu. Lowering the window afterwards does not
-        # work: activation lands later, and the stage has already switched.
-        # So when the app was in the background, take the window off screen
-        # before activating, and afterwards put it back behind everything and
-        # hand focus back. Not when the app was already in front: then the
-        # window is already where the user left it.
-        was_active = QApplication.applicationState() == Qt.ApplicationActive
-        park = self.isVisible() and not was_active
-        win_id = int(self.winId()) if park else 0
-        self._tray_opened_window = False
-        try:
-            if park:
-                window_order_out(win_id)
-            activate_app()
-            menu.exec(QCursor.pos())
-        except Exception as exc:          # never let the tray take the app down
-            print(f"tray menu failed to open: {exc}")
-        finally:
-            # "Open git_autosync" fronts the window on purpose; leave it be.
-            if park and not self._tray_opened_window:
-                window_order_back(win_id)
-                deactivate_app()
-
     def _show_tray_hint(self):
         """Say what happened — a quit that visibly does nothing reads as a hang."""
         if self._tray_hint_shown or not self._tray:
@@ -1695,10 +1618,13 @@ class MainWindow(QMainWindow):
         # First, or the raise below does nothing: an accessory app can't take
         # focus until its activation policy is back to Regular.
         self.hidden_to_tray = False
-        self._tray_opened_window = True   # _popup_tray_menu must not park it again
         set_dock_icon_visible(True)
         self.show()
         self.raise_()
+        # The native menu leaves the app inactive, and with Stage Manager on a
+        # window shown by an inactive app is filed into a background stage —
+        # the same reason main() activates at launch.
+        activate_app()
         self.activateWindow()
         self.repaint()
 

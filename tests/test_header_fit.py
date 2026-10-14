@@ -181,9 +181,10 @@ def test_the_dock_filter_does_reopen_a_merely_hidden_window(parked):
 
 
 def test_hiding_to_the_menu_bar_survives_activation(parked):
-    """Clicking the tray icon activates the app. While the window was parked in
-    the menu bar, that re-opened it — so the red button looked inert and Quit
-    looked like it only fronted the app."""
+    """An activation from elsewhere (Cmd-Tab, `open -a`; the tray click did it
+    too while the tray used a Qt popup) re-opened a window parked in the menu
+    bar — so the red button looked inert and Quit looked like it only fronted
+    the app."""
     from PySide6.QtCore import QEvent
 
     app, window = parked
@@ -225,55 +226,47 @@ def test_a_quit_gesture_parks_the_window_like_the_red_button(parked):
     assert not window.isVisible(), "activation re-opened a window parked by Cmd+Q"
 
 
-def _popup_with(window, monkeypatch, *, active: bool, choose=None):
-    """Run the tray popup with AppKit calls, the menu and app state stubbed."""
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QMenu
+def test_the_tray_uses_the_native_menu_and_no_click_handler(window, monkeypatch):
+    """The dot must only open the menu. AppKit's own status item menu does that
+    without activating the app; anything wired to `activated` ran a Qt popup,
+    which needed activation and so dragged the window (and its Stage Manager
+    stage) forward. Offscreen has no tray, so force one into existence."""
+    monkeypatch.setattr(QtWidgets.QSystemTrayIcon, "isSystemTrayAvailable",
+                        staticmethod(lambda: True))
+    saved = window._tray
+    try:
+        window._setup_tray()
+        tray = window._tray
+        assert tray.contextMenu() is window._tray_menu
+        assert tray.receivers("2activated(QSystemTrayIcon::ActivationReason)") == 0, \
+            "something is connected to the tray click"
+        labels = [a.text() for a in window._tray_menu.actions() if a.text()]
+        assert labels == ["Open git_autosync", "Dry-run", "Sync now",
+                          "Start at login", "Quit"]
+    finally:
+        window._tray_timer.stop()
+        if window._tray is not None:
+            window._tray.hide()
+        window._tray = saved
+
+
+def test_open_from_the_tray_menu_shows_and_activates(parked, monkeypatch):
+    """The native menu leaves the app inactive, and with Stage Manager a window
+    shown by an inactive app is filed into a background stage. "Open" is the
+    one way back, so it must activate the app as launch does."""
     import app.ui_main as ui
 
-    calls = []
-    monkeypatch.setattr(ui, "activate_app", lambda: calls.append("activate") or True)
-    monkeypatch.setattr(ui, "window_order_out", lambda w: calls.append("out") or True)
-    monkeypatch.setattr(ui, "window_order_back", lambda w: calls.append("back") or True)
-    monkeypatch.setattr(ui, "deactivate_app", lambda: calls.append("deactivate") or True)
-    monkeypatch.setattr(QApplication, "applicationState",
-                        staticmethod(lambda: Qt.ApplicationActive if active
-                                     else Qt.ApplicationInactive))
-    window._tray = object()
-    window._tray_menu = QMenu()
-
-    def exec_(*a):
-        calls.append("menu")
-        if choose:
-            choose()
-    monkeypatch.setattr(window._tray_menu, "exec", exec_)
-    window._popup_tray_menu()
-    return calls
-
-
-def test_tray_menu_keeps_an_open_window_out_of_the_activation(parked, monkeypatch):
-    """Clicking the menu bar dot must show the menu, not drag the window (or
-    its Stage Manager stage) over whatever the user is working in."""
-    _, window = parked
-    assert window.isVisible()
-    assert _popup_with(window, monkeypatch, active=False) == [
-        "out", "activate", "menu", "back", "deactivate"]
-
-
-def test_open_from_the_tray_menu_is_not_undone(parked, monkeypatch):
-    _, window = parked
-    calls = _popup_with(window, monkeypatch, active=False, choose=window._tray_open)
-    assert calls == ["out", "activate", "menu"]
-
-
-def test_tray_menu_leaves_the_window_when_the_app_was_already_in_front(parked, monkeypatch):
-    _, window = parked
-    assert _popup_with(window, monkeypatch, active=True) == ["activate", "menu"]
-
-
-def test_tray_menu_does_not_touch_a_parked_window(parked, monkeypatch):
     app, window = parked
     window.close()
     _pump(app)
-    assert not window.isVisible()
-    assert _popup_with(window, monkeypatch, active=False) == ["activate", "menu"]
+    assert window.hidden_to_tray
+
+    calls = []
+    monkeypatch.setattr(ui, "activate_app", lambda: calls.append("activate") or True)
+    monkeypatch.setattr(ui, "set_dock_icon_visible",
+                        lambda v: calls.append(f"dock={v}") or True)
+    window._tray_open()
+    _pump(app)
+
+    assert window.isVisible() and not window.hidden_to_tray
+    assert calls == ["dock=True", "activate"]

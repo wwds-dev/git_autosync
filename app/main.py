@@ -4,6 +4,7 @@ from PySide6.QtCore import QEvent, QObject
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from . import appkit_guard
 from .macos_dock import activate_app, set_dock_icon_visible
 from .macos_guard import install as install_exception_guard
 from .style import STYLESHEET
@@ -59,13 +60,16 @@ class _App(QApplication):
 
 
 class _DockActivateFilter(QObject):
-    """Reopens the window when the macOS Dock icon is clicked while hidden.
+    """Reopens the window when the app is activated while the window is closed.
 
-    Only while the app still has a Dock icon. Once the window is hidden to the
-    menu bar the app turns Accessory and has no Dock tile, so there is nothing
-    to click — but activation still happens, e.g. the moment the tray icon is
-    clicked. Acting on that re-opened the window behind the menu, which looked
-    like the red button had done nothing and like Quit merely fronted the app.
+    That is a click on the Dock tile, which exists while the app is Regular.
+    It is not a click on the menu bar dot: the native tray menu opens without
+    activating the app at all.
+
+    `hidden_to_tray` is the exception. The window was deliberately sent to the
+    menu bar (red button, Cmd+Q, Hide, or a login start), so an activation from
+    elsewhere — Cmd-Tab, `open -a`, a notification — must not undo that.
+    "Open git_autosync" in the tray menu clears the flag and is the way back.
     """
 
     def __init__(self, window: MainWindow):
@@ -91,6 +95,9 @@ def main():
     # when it is created, and an ObjC exception escaping Qt's Cocoa plugin
     # otherwise aborts the process with nothing logged.
     guard_ok = install_exception_guard()
+    # Also before QApplication, and the one that actually matters for the
+    # tray: without it the native menu bar menu aborts the app on macOS 27.
+    click_guard_ok = appkit_guard.install()
     # Recorded so a recurrence can be checked against a build that definitely
     # had the guard, instead of guessing which binary was running.
     try:
@@ -98,7 +105,8 @@ def main():
         from datetime import datetime as _dt
         with open(_paths.user_log_dir() / "crash.log", "a") as _fh:
             _fh.write(f"[{_dt.now():%Y-%m-%d %H:%M:%S}] startup — "
-                      f"exception guard {'active' if guard_ok else 'UNAVAILABLE'}\n")
+                      f"exception guard {'active' if guard_ok else 'UNAVAILABLE'}, "
+                      f"clickCount guard {'active' if click_guard_ok else 'UNAVAILABLE'}\n")
     except Exception:
         pass
     app = _App(sys.argv)
