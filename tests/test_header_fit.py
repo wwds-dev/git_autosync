@@ -223,3 +223,43 @@ def test_a_quit_gesture_parks_the_window_like_the_red_button(parked):
     app.sendEvent(app, QEvent(QEvent.ApplicationActivate))
     _pump(app)
     assert not window.isVisible(), "activation re-opened a window parked by Cmd+Q"
+
+
+def _popup_with(window, monkeypatch, *, active: bool):
+    """Run the tray popup with activation, the menu and the window stubbed."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QMenu
+    import app.ui_main as ui
+
+    calls = []
+    monkeypatch.setattr(ui, "activate_app", lambda: calls.append("activate") or True)
+    monkeypatch.setattr(QApplication, "applicationState",
+                        staticmethod(lambda: Qt.ApplicationActive if active
+                                     else Qt.ApplicationInactive))
+    window._tray = object()
+    window._tray_menu = QMenu()
+    monkeypatch.setattr(window._tray_menu, "exec", lambda *a: calls.append("menu"))
+    monkeypatch.setattr(window, "lower", lambda: calls.append("lower"), raising=False)
+    window._popup_tray_menu()
+    return calls
+
+
+def test_tray_menu_sends_an_open_window_back_down(parked, monkeypatch):
+    """Clicking the menu bar dot must show the menu, not drag the window over
+    whatever the user is working in."""
+    _, window = parked
+    assert window.isVisible()
+    assert _popup_with(window, monkeypatch, active=False) == ["activate", "lower", "menu"]
+
+
+def test_tray_menu_leaves_the_window_when_the_app_was_already_in_front(parked, monkeypatch):
+    _, window = parked
+    assert _popup_with(window, monkeypatch, active=True) == ["activate", "menu"]
+
+
+def test_tray_menu_does_not_touch_a_parked_window(parked, monkeypatch):
+    app, window = parked
+    window.close()
+    _pump(app)
+    assert not window.isVisible()
+    assert _popup_with(window, monkeypatch, active=False) == ["activate", "menu"]

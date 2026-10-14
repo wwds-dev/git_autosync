@@ -1643,8 +1643,8 @@ class MainWindow(QMainWindow):
         - non-activating QNSPanel without activation: menu opens but items do
           not respond.
 
-        The cost is that activating brings the main window forward when it is
-        already open. A window parked in the menu bar stays parked —
+        The cost is that activating raises the main window when it is open;
+        that is undone below by lowering it again. A window parked in the menu bar stays parked —
         _DockActivateFilter ignores activation while hidden_to_tray is set.
         """
         menu = getattr(self, "_tray_menu", None)
@@ -1653,8 +1653,17 @@ class MainWindow(QMainWindow):
         if menu.isVisible():
             menu.hide()          # a second click on the icon dismisses it
             return
+        # Activation is unavoidable (see above) but it raises an open window
+        # over whatever the user is working in, and all they asked for was the
+        # menu. If the app was in the background and a window is up, send that
+        # window back down again once the app is active. Skipped when the app
+        # was already in front: then the window was already where they left it.
+        was_active = QApplication.applicationState() == Qt.ApplicationActive
+        window_open = self.isVisible()
         try:
             activate_app()
+            if window_open and not was_active:
+                self.lower()
             menu.exec(QCursor.pos())
         except Exception as exc:          # never let the tray take the app down
             print(f"tray menu failed to open: {exc}")
