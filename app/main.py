@@ -4,7 +4,7 @@ from PySide6.QtCore import QEvent, QObject
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from .macos_dock import set_dock_icon_visible
+from .macos_dock import activate_app, set_dock_icon_visible
 from .macos_guard import install as install_exception_guard
 from .style import STYLESHEET
 from .ui_main import MainWindow
@@ -141,6 +141,10 @@ def main():
         window.hidden_to_tray = True
     else:
         window.show()
+        # activateWindow() alone is not enough on macOS 27: with Stage
+        # Manager on, a window whose app is not active is filed into a
+        # background stage and never appears. Activate the app itself.
+        activate_app()
 
     def _on_new_connection():
         conn = server.nextPendingConnection()
@@ -151,6 +155,7 @@ def main():
         window.hidden_to_tray = False
         window.show()
         window.raise_()
+        activate_app()   # see the startup show() above
         window.activateWindow()
 
     server.newConnection.connect(_on_new_connection)
