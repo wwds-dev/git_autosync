@@ -11,3 +11,4 @@
 {"ts": "2026-10-14T02:41:12", "phase": "review", "state": "start", "spec": "tray-menu-only"}
 {"ts": "2026-10-14T02:49:29", "phase": "review", "state": "done", "spec": "tray-menu-only"}
 {"ts": "2026-10-14T02:49:30", "phase": "verify", "state": "done", "spec": "tray-menu-only"}
+{"ts": "2026-10-14T02:49:53", "phase": "release", "state": "blocked", "spec": "tray-menu-only"}
