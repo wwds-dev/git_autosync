@@ -10,12 +10,13 @@ CLI engine (`git_autosync.sh`, tested and canonical) plus a PySide6 desktop GUI
 Tests live in `tests/`: the engine is driven against throwaway repos in
 `test_push_only.py`, summary parsing is in `test_runner.py`, and
 `test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
-to check header labels fit, the tray menu stays readable, rows are banded on screen,
-Pull buttons survive a list rebuild and a window hidden to the menu bar stays hidden.
+to check header labels fit, rows are banded on screen, Pull buttons survive a list
+rebuild, the tray uses the native menu with nothing wired to the click, and a window
+hidden to the menu bar stays hidden. `test_appkit_guard.py` runs the `clickCount`
+guard against the real Objective-C runtime (the crash case in a subprocess) and
+fails if `app/appkit_guard.py` drifts from Lab Hub's original.
 `test_problem_advice.py` pins the per-repo failure advice, the shape of the leak
 triage text, and how `.gitleaksignore` fingerprints are split for display.
-`test_tray_panel.py` is opt-in and records a tray-menu experiment that was rejected
-(run it with `QT_QPA_PLATFORM=cocoa GUI_TESTS=1 .venv/bin/python -m pytest tests/test_tray_panel.py`).
 
 For every repo listed in `autosync_repos.txt`, the tool:
 
@@ -455,17 +456,20 @@ killed by the gesture that closes a window.
 
 The tray menu has **Open git_autosync**, quick **Dry-run** and **Sync now** actions
 so you don't need to open the window at all, a **Start at login** toggle, and
-**Quit**. The menu paints its own light surface, so it stays readable in Dark Mode.
-Clicking the icon again while the menu is open closes it.
+**Quit**. It is the native macOS menu, as in Backup Control Center and Lab Hub.
 
-Opening the tray menu activates the app, because that is the only arrangement
-confirmed on macOS 27 to both open the menu and let its items fire. The cost:
-if the main window is already open, it comes forward with the menu. A window
-parked in the menu bar stays parked. The alternatives, and why each was ruled
-out, are in `_popup_tray_menu`'s docstring in `app/ui_main.py`; in short, Qt's
-native `setContextMenu` aborts the process on macOS 27 (an exception the crash
-guard below cannot catch), and a menu shown without activation either never
-opens or opens with dead items.
+Clicking the menu bar dot **only opens the menu**. It does not activate the app,
+bring the window forward or switch Stage Manager stages, whether the window is
+open or hidden. **Open git_autosync** is the one item that shows the window, and
+it activates the app so Stage Manager does not file the window away.
+
+The native menu used to abort the app on macOS 27, because Qt reads
+`-[NSEvent clickCount]` when the menu starts tracking and macOS 27 raises for a
+non-mouse event. `app/appkit_guard.py`, installed before the `QApplication` is
+built, makes that call answer 0 for such events. It is a copy of Lab Hub's guard
+(see the Notes below). Until 2026-10-14 the app worked around the abort with a
+Qt-drawn popup that needed the app active, which pulled an open window forward
+with the menu. Spec: `docs/specs/tray-menu-only.md`.
 
 **Start at login** writes a separate LaunchAgent
 (`~/Library/LaunchAgents/com.wwds-dev.git-autosync-login.plist`) that starts
@@ -515,7 +519,15 @@ needs right-click → Open (no Apple Developer ID / notarization yet).
   `QApplication` is constructed, and installs an uncaught-exception handler that
   appends the exception name, reason, and call stack to `crash.log` in the app's log
   directory — so a crash that still gets through leaves evidence instead of a silent
-  abort. Pure ctypes, no PyObjC dependency.
+  abort. Pure ctypes, no PyObjC dependency. It **cannot** stop the tray-menu abort:
+  that exception is raised in a CoreFoundation notification callout, outside the
+  AppKit try/catch.
+- **`clickCount` guard** (`app/appkit_guard.py`). This is the fix for that abort:
+  it swizzles `-[NSEvent clickCount]` to return 0 for event types that have no click
+  count. Its code is a byte-identical copy of `lab_hub/ui/appkit_guard.py`, and
+  `tests/test_appkit_guard.py` fails if they drift. Delete every copy together when
+  Qt ships a fixed cocoa plugin. The startup line in `crash.log` records whether it
+  installed.
 - Config, logs, and last-sync state live in
   `~/Library/Application Support/git_autosync/` (the packaged bundle is
   read-only), seeded from `autosync_repos.txt` on first run.

@@ -11,27 +11,14 @@
 - [ ] `P1` `bug` `@ai` **A mode flag can be silently dropped from the live config.** `push-only` was set on `imprint` and `imprint/vidforge` on 2026-09-14; by the config's next write (2026-09-15 03:33) both were bare again, autosync reverted to sweep mode, and on 2026-09-18 04:05 it committed a broken working tree — `agents/audiobook/panel.py` with four connects to methods that did not exist, so Imprint would not start at all. The suite reports 3 failures and 159 errors against that commit; autosync does not run tests, which is precisely why sweep mode is wrong for a repo being worked in. `app/config.py.write_repos()` has preserved flags since 2026-09-14, but a **GUI process started before that build stays on the old code in memory** — PID 2029 was still running a pre-rebuild binary five days later. Options: have the engine warn when a repo loses a flag it previously had, keep modes in a file the GUI never rewrites, or make the GUI reload its own code on config change. Restoring the flag by hand is not a fix.
 - [x] `P1` `feature` `@ai` **push-only mode.** A sweep in a repo someone is working in rolls unrelated half-finished changes into one `autosync: <timestamp>` commit — `imprint` collected three on consecutive nights, one burying most of a docs rewrite. A config line may now carry `push-only`: push existing commits, never stage or commit, never publish an untracked branch. History scan still runs; staged scan skipped because nothing is staged. `imprint` and `imprint/vidforge` are set to it in the live config.
 - [x] `P2` `testing` `@ai` **The engine had no tests.** Uncomfortable for the one tool whose job is writing to every other repo. `tests/test_push_only.py` drives the real shell script against throwaway repos and a throwaway remote. Two self-inflicted bugs it caught: the first version *skipped* when its fixture was misconfigured, so seven useless skips read as success; and the no-upstream branch in the push block was unreachable, because `ahead` is only counted when an upstream exists — the protection worked by accident and logged "nothing to push" while sitting on commits.
-- [ ] `P2` `upstream` `@me` **Report the tray-menu abort to Qt.** `setContextMenu`
-  on a `QSystemTrayIcon` aborts on macOS 27 with PySide6 6.11.2 (the latest
-  release — there is no upgrade to take). Qt's `NSMenuDidBeginTracking`
-  observer calls `-[NSEvent clickCount]` on an event that is not a mouse event,
-  the NSException unwinds through libqcocoa's C++ frames into `std::terminate`,
-  and the process dies on SIGABRT. The app's exception guard cannot catch it:
-  it is raised inside a CoreFoundation notification callout, outside the AppKit
-  try/catch that `NSApplicationCrashOnExceptions` controls. Two reproducible
-  crash reports with identical stacks are in `~/Library/Logs/DiagnosticReports/`
-  (`git_autosync-2026-09-23-092136.ips`, `git_autosync-2026-10-07-153030.ips`).
-  Minimal trigger: attach a `QMenu` to a `QSystemTrayIcon` with
-  `setContextMenu`, click the icon. File at bugreports.qt.io.
-
-- [ ] `P3` `infra` `@ai` **Re-try `setContextMenu` on the next Qt release.** It is
-  the only arrangement that opens the tray menu *without* activating the app,
-  which is what drags an already-open window forward. Blocked only by the abort
-  above, so when 6.11.3 or 6.12 lands it is worth one more attempt — the switch
-  is roughly three lines. Why the alternatives were rejected is in
-  `_popup_tray_menu`'s docstring, and `tests/test_tray_panel.py` records the
-  non-activating-panel experiment (the style applies, but the menu's items stop
-  responding), so neither has to be re-derived.
+- [ ] `P2` `upstream` `@me` **Report the tray-menu abort to Qt.** On macOS 27,
+  Qt's `NSMenuDidBeginTracking` observer calls `-[NSEvent clickCount]` on a
+  non-mouse event, which raises and aborts any PySide6 app with a native tray
+  menu (git_autosync, Backup Control Center and Lab Hub all hit it). The workaround
+  is in place (`app/appkit_guard.py`), but the bug is Qt's. Stacks:
+  `git_autosync-2026-10-07-153030.ips`, `Backup Control Center-2026-10-07-151831.ips`.
+  Minimal trigger: `setContextMenu` on a `QSystemTrayIcon`, click the icon. File at
+  bugreports.qt.io.
 
 - [ ] `P0` `security` `@me` **Rotate any credential that was ever committed.** Repos with secrets in history stay out of `autosync_repos.txt`; publishing one requires history cleanup first, and the credential should be rotated regardless of what GitHub sees.
 - [ ] `P1` `infra` `@me` **Coverage has fallen far behind the repo count.** The Sep 2026
@@ -94,7 +81,7 @@
 - [ ] `P2` `design` `@me` Decide whether skips belong in the problems dialog. Every `SKIP` gets a card, so a repo deliberately kept off GitHub, or a push-only repo on an unpublished branch, pops the dialog after every manual run. Options: leave skips out, show only actionable ones, or let a repo be marked "skip is expected".
 - [ ] `P3` `design` `@ai` The problems dialog says "N repo(s) did not sync" after a dry-run too, where nothing was going to sync; word the header for dry-runs.
 - [ ] `P3` `testing` `@ai` Cover the problems dialog's wiring: `_run_advice_action` maps each action key to its handler, and nothing tests that a button opens the right fix for the right repo — only `problem_advice` itself is tested.
-- [ ] `P3` `bug` `@ai` Remove the dead `self._panel_style_logged` in `app/ui_main.py`, left over from the reverted non-activating-panel experiment (`make_window_nonactivating` is now used only by the opt-in `tests/test_tray_panel.py`).
+- [x] `P2` `bug` `@ai` **Clicking the menu bar dot only opens the menu** and never activates the app or brings the window forward. It is the native `setContextMenu` menu behind Lab Hub's `clickCount` guard, and the popup, timing hack and window parking are gone. Verified on hardware 2026-10-14: 25+ clicks with the window open and hidden, items fire, red button and Cmd+Q hide, Quit exits, no crash. Removed the dead `_panel_style_logged`. Spec `docs/specs/tray-menu-only.md`.
 
 ## v3 — later
 

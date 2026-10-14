@@ -1,6 +1,6 @@
 # Spec: the menu bar dot only opens its menu
 
-Status: **awaiting owner approval (Define gate)** · 2026-10-14
+Status: **approved by the owner 2026-10-14; built and verified on hardware 2026-10-14**
 
 ## Define
 
@@ -121,3 +121,22 @@ Run `build_app.sh`, install, and smoke test: launch shows the window, the dot
 opens the menu without fronting, Open, Dry-run, Cmd+Q hides, the red button
 hides, and Quit exits. Commits are made as `wwds-dev
 <243015673+wwds-dev@users.noreply.github.com>`.
+
+## Verification result (2026-10-14, build v2.097 (e2ebcbb) installed in /Applications)
+
+The test used computer-use on the real display, with Stage Manager on and Finder
+as the active app:
+- With the window open behind Finder, the dot was clicked 21 times to open the
+  menu (plus as many clicks to close it). The menu opened every time, the menu
+  bar kept saying **Finder**, and the window's title bar stayed inactive.
+- **Dry-run** from the menu ran (output appeared in the window), and Finder
+  stayed the active app.
+- The red button hid the window. 4 more opens of the menu never showed it.
+- **Open git_autosync** showed the window and made it active.
+- Cmd+Q hid it. 2 more opens of the menu never showed it.
+- **Quit** ended the process.
+- No new `.ips` in DiagnosticReports. `crash.log` startup line:
+  `exception guard active, clickCount guard active`.
+- Suite: 100 passed. Mutations caught: `activated` connected, no activation in
+  Open, a mouse type dropped from the guard, a guard that always calls the
+  original, and the guard not installed in `main()`.
