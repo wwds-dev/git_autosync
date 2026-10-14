@@ -21,8 +21,11 @@ pyinstaller --noconfirm --distpath "$OUT/dist" --workpath "$OUT/work" packaging/
 
 codesign --force --deep -s - "$OUT/dist/git_autosync.app"
 
-rm -rf "/Applications/git_autosync.app"
-cp -R "$OUT/dist/git_autosync.app" /Applications/
+# Update the installed bundle in place rather than deleting and copying a new
+# one: a fresh bundle at the same path gets a new identity, and Spotlight's app
+# list kept every old one, so the app appeared three times after three builds.
+mkdir -p "/Applications/git_autosync.app"
+rsync -a --delete "$OUT/dist/git_autosync.app/" "/Applications/git_autosync.app/"
 
 # Tolerate failure: something (Spotlight, a Finder window, an antivirus) can be
 # holding a file in the build output for a moment, and `rm` then prints "Directory not
