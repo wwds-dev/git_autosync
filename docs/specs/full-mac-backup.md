@@ -1,8 +1,8 @@
 # Spec: back up everything on this Mac, not just the checked-out branch
 
 Status: **Define and Architect approved by the owner 2026-10-20** (all five decisions as
-recommended; see the end). Built on `feat/full-mac-backup`; review and security findings fixed 2026-10-20
-(see "After review" at the end).
+recommended; see the end). **Released 2026-10-21 as v2.118 (`7c8bfde`)**; review and security findings fixed
+(see "After review" and "Release" at the end).
 
 Owner decisions already made:
 - 2026-10-20: side branches go to the hidden backup area (`refs/backup/...`), not to
@@ -147,3 +147,22 @@ P0 and four P1s, all fixed with a regression test each, and every new defence mu
   numeric scan depth.
 - Deferred to TODO: identity check on the origin push, nested-repo coverage, legacy-gitleaks
   fallback for the snapshot scan.
+
+## Release (2026-10-21, v2.118, `7c8bfde`)
+
+Four security rounds in all (the third and fourth after the owner's "final check"); every
+P0/P1 fixed with a regression test, every new defence mutation-checked. Suite: 167 passed,
+1 skipped. Installed to `/Applications/git_autosync.app`; the nightly LaunchAgent runs the
+master checkout's engine, so it is live from tonight's 03:30 run.
+
+**Smoke test:** the owner declined screen control, so it ran headless: the installed bundle
+launched offscreen and stayed up for 10 s, no `.ips` report. The on-screen checks (tray menu,
+tooltip on real Dark Mode) were **not done**; the tooltip fix is covered by a test that forces
+the dark surface.
+
+**First real run** (nightly environment): 19 repos, `synced=10 blocked=0 errors=0 noop=9
+unlisted=2`, every repo `BACKUP … ok`, 163 refs in `wwds-dev/mac_backup`. Restore check from a
+fresh `git init`: sentinel's three side branches came back with identical SHAs; all of
+foundry's uncommitted files (14 files and 3 untracked folders) are in `wip/main`, on its
+current HEAD. Still flagged `UNLISTED`: the lab root and `~/Documents/Websites/shopfront`, so the
+tray shows attention until the owner decides on them.

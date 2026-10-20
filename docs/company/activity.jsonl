@@ -23,3 +23,5 @@
 {"ts": "2026-10-20T21:16:48", "phase": "secure", "state": "start", "spec": "full-mac-backup"}
 {"ts": "2026-10-20T21:33:43", "phase": "secure", "state": "done", "spec": "full-mac-backup"}
 {"ts": "2026-10-20T21:33:43", "phase": "document", "state": "done", "spec": "full-mac-backup"}
+{"ts": "2026-10-21T00:17:11", "phase": "verify", "state": "done", "spec": "full-mac-backup"}
+{"ts": "2026-10-21T00:17:11", "phase": "release", "state": "done", "spec": "full-mac-backup"}
