@@ -90,3 +90,17 @@ file; origin is pushed the scanned SHA explicitly, and a sweep commit whose tree
 scanned tree is not pushed; the allowlist always lives in App Support and only full
 fingerprints count from it. Each has a regression test, and 7 of 7 planted faults were caught.
 Live dry-run over all 19 entries: nothing blocked, 65 s.
+
+## Re-check (fourth round, 2026-10-21, at ddcd021)
+
+P0: none. All third-round fixes held (staged scan with backups on and off, sweep filter, the
+set-upstream path, published config via ls-remote, explicit-SHA pushes, a branch switch forced
+mid-run, the allowlist location). One **P1**: the scanner-file guard used `--not --remotes`, so a
+loosened `.gitleaks.toml` already pushed to a second remote, or under a locally created
+`refs/remotes/*` ref, counted as published; autosync then pushed it to origin, trusted it next run,
+and a committed token reached the public origin. Fixed after it: the guard compares the scanner
+files of what would land on origin's default branch with what `ls-remote` says that branch has
+now; side branches are not trusted, so they are not restricted. Two regression tests fail on the
+old guard and pass on the new one. Residual (P2, by design, deferred): anyone with push
+credentials can still loosen the scanner by pushing a config by hand; closing it needs an
+owner-approved blob pin.

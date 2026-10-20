@@ -805,3 +805,38 @@ class TestThirdRound:
         result = run(root, "proj  push-only\n", gitleaks=GITLEAKS,
                      AUTOSYNC_IGNORE_DIR="", HOME=str(root))
         assert "BLOCKED proj" in result.stdout, result.stdout[-1500:]
+
+
+@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
+class TestFourthRound:
+    """The scanner-file guard compares with origin itself, not local refs."""
+
+    LOOSE = "[allowlist]\npaths = ['''.*''']\n"
+
+    def test_a_config_already_on_a_second_remote_is_still_not_published(self, ws):
+        root, repo, backup = ws
+        fork = root / "fork.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(fork)], check=True)
+        git(repo, "remote", "add", "fork", str(fork))
+        _commit(repo, ".gitleaks.toml", self.LOOSE, "scanner tweak")
+        git(repo, "push", "-q", "fork", "main")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "scanner config changed" in result.stdout, result.stdout[-1500:]
+        assert ".gitleaks.toml" not in git(repo, "ls-tree", "-r", "--name-only", "origin/main")
+
+    def test_a_locally_created_remote_ref_does_not_count_as_published(self, ws):
+        root, repo, backup = ws
+        _commit(repo, ".gitleaks.toml", self.LOOSE, "scanner tweak")
+        git(repo, "update-ref", "refs/remotes/origin/stash-sync", "HEAD")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "scanner config changed" in result.stdout, result.stdout[-1500:]
+
+    def test_a_side_branch_with_its_own_config_may_still_be_pushed(self, ws):
+        """Only origin's default branch is trusted, so a side branch is no risk."""
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "side")
+        git(repo, "push", "-q", "-u", "origin", "side")
+        _commit(repo, ".gitleaks.toml", "[extend]\nuseDefault = true\n", "tune on a branch")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "scanner config changed" not in result.stdout, result.stdout[-1500:]
+        assert git(repo, "rev-parse", "origin/side") == git(repo, "rev-parse", "side")

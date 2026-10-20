@@ -13,6 +13,7 @@
 - [ ] `P2` `infra` `@me` **Decide on the two unlisted repos** the scan flags: the lab root (`wwds-dev/lab`, already on GitHub) and `~/Documents/Websites/shopfront` (no remote). Add each to the list, or accept the attention state.
 - [x] `P2` `security` `@ai` **Author emails are checked before pushing to the backup repo** (`AUTOSYNC_ALLOWED_EMAILS`; owner allowed the wwds-dev and Claude noreply addresses, 2026-10-20).
 - [ ] `P2` `security` `@ai` **The origin push has no identity check.** Only the backup push checks author/committer emails; a commit with a real address on a branch with an upstream would still reach origin.
+- [ ] `P2` `security` `@me` **Pin an owner-approved version of `.gitleaks.toml` / `.gitleaksignore`.** The gate trusts origin's default branch; anything with push credentials (agents use the owner's) can loosen the scanner by pushing a config by hand (security review, fourth round).
 - [ ] `P3` `feature` `@ai` **Nested repos and submodules are backed up as gitlinks only** — their own content needs its own list entry; the row does not say so (security review P3).
 - [ ] `P3` `testing` `@ai` **The snapshot scan has no fallback for gitleaks without the `git` subcommand** (review P3-3); fine on 8.30, fails closed on older.
 

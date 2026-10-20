@@ -147,14 +147,16 @@ GL_SRC=""
 GL_NOTED=""
 SCAN_LABEL=""
 GL_PUB=""
+GL_PUB_REF=""
 gl_repo_init(){
   local dir="$1" out sha
-  GL_PUB=""; GL_NOTED=""
+  GL_PUB=""; GL_PUB_REF=""; GL_NOTED=""
   git -C "$dir" remote get-url origin >/dev/null 2>&1 || return 0
   if ! out="$(git -C "$dir" ls-remote --symref origin HEAD 2>/dev/null)"; then
     log "  cannot reach origin to read its scanner config - using default rules"
     return 0
   fi
+  GL_PUB_REF="$(printf '%s\n' "$out" | awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }')"
   sha="$(printf '%s\n' "$out" | awk '$1 !~ /^ref:/ && $2 == "HEAD" { print $1; exit }')"
   [ -n "$sha" ] || return 0   # empty remote
   git -C "$dir" cat-file -e "$sha^{commit}" 2>/dev/null || git -C "$dir" fetch -q origin 2>/dev/null
@@ -226,13 +228,21 @@ scan_staged(){
   return $rc
 }
 
-# Unpushed commits, or staged changes, that touch the scanner's own files.
-# autosync does not publish those: once on origin they are trusted, so a
-# loosened config would switch the gate off from the next run on.
+# Would publishing <target> (a commit, or the sweep's staged tree) to origin's
+# default branch change the scanner's own files there? autosync does not
+# publish that: once on origin's default branch they are trusted, so a
+# loosened config would switch the gate off from the next run on. Compared
+# by content against what ls-remote says origin has (GL_PUB) — not against
+# local remote-tracking refs, which a second remote or `git update-ref`
+# made look published (security review, fourth round). Nothing to compare
+# with means any scanner file counts as a change.
 scanner_files_changed(){
-  [ -n "$(git log --format=%H "$1" --not --remotes -- .gitleaks.toml .gitleaksignore 2>/dev/null | head -1)" ] \
-    && return 0
-  [ "$mode" = "sweep" ] && [ -n "$(git diff --cached --name-only HEAD -- .gitleaks.toml .gitleaksignore 2>/dev/null)" ]
+  local target="$1"
+  if [ -z "$GL_PUB" ]; then
+    [ -n "$(git ls-tree --name-only "$target" -- .gitleaks.toml .gitleaksignore 2>/dev/null)" ]
+    return
+  fi
+  ! git diff --quiet "$GL_PUB" "$target" -- .gitleaks.toml .gitleaksignore 2>/dev/null
 }
 
 scan_history(){
@@ -847,8 +857,14 @@ process_repo(){
     N_NOOP=$((N_NOOP+1)); return
   fi
 
-  if [ "$needs_create" -eq 0 ] && [ -n "$HEAD_SCANNED" ] && scanner_files_changed "$HEAD_SCANNED"; then
-    log "  ERROR: .gitleaks.toml or .gitleaksignore changed in work not yet on origin."
+  # Only origin's default branch is trusted, so only a push there is checked.
+  # With the default branch unknown (origin unreachable or empty), every push is.
+  local dest target=""
+  dest="$(git config "branch.$cur.merge" 2>/dev/null)"; dest="${dest:-refs/heads/$cur}"
+  if [ "$mode" = "sweep" ]; then target="$STAGED_TREE"; else target="$HEAD_SCANNED"; fi
+  if [ "$needs_create" -eq 0 ] && [ -n "$target" ] && [ -n "$cur" ] \
+     && { [ -z "$GL_PUB_REF" ] || [ "$dest" = "$GL_PUB_REF" ]; } && scanner_files_changed "$target"; then
+    log "  ERROR: .gitleaks.toml or .gitleaksignore would change on origin's default branch."
     log "         autosync does not publish the scanner's own rules; review the change and push it yourself."
     unstage
     SUMMARY+=("ERROR   $label  (scanner config changed - review and push it yourself)"); N_ERR=$((N_ERR+1)); return
