@@ -70,3 +70,23 @@ identity check fails closed; lock files, dependency trees, SVGs, text under medi
 two `.env` variants are left out. Each has a test; 7 of the new defences were mutation-checked
 (the identity-check fail-closed path is defence in depth behind the `rev-list` checks and has
 no test that can reach it).
+
+## Final check before release (third round, 2026-10-20, at 4e5a1b4)
+
+Earlier routes all closed. New: **P0** — the staged scan, pointed at `.git` with
+`GIT_WORK_TREE`, scanned nothing and reported clean, so a sweep published a token to origin
+(a regression from the second-round fix). **P1-A** — the "published" config could be published
+by autosync itself (push-only: a loosened `.gitleaks.toml` in a local commit was pushed, then
+trusted on the next run; sweep: an untracked one was committed and pushed), and a rewritten
+`refs/remotes/origin/*` or `origin/HEAD` was trusted in one run. **P1-B** — origin got
+whatever HEAD was at push time, so a commit made after the scan was pushed unscanned. **P2** —
+the own allowlist fell back to the checkout when `AUTOSYNC_STATE_DIR` was unset, and accepted
+commit-less lines.
+
+Fixed after it: staged changes are scanned as a deterministic commit from the `.git` source;
+the sweep filters credentials and unscannable formats like the backup; the published commit is
+what `git ls-remote origin` reports; autosync never pushes a range that changes either scanner
+file; origin is pushed the scanned SHA explicitly, and a sweep commit whose tree is not the
+scanned tree is not pushed; the allowlist always lives in App Support and only full
+fingerprints count from it. Each has a regression test, and 7 of 7 planted faults were caught.
+Live dry-run over all 19 entries: nothing blocked, 65 s.

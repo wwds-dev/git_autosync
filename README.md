@@ -182,12 +182,22 @@ as "older backup refs kept".
   blocks the whole repo, as any other leak does.
 - A scan whose own git step failed counts as failed, not clean: gitleaks 8.30.1
   exits 0 with "no leaks found" when its `git log` fails.
-- What the scanner trusts comes from the **published** repo — its default branch on
-  origin, as last fetched — never from this checkout: `.gitleaks.toml` from there,
+- What the scanner trusts comes from the **published** repo — the commit `git
+  ls-remote origin` reports for its default branch, not a local ref that can be
+  rewritten — never from this checkout: `.gitleaks.toml` from there,
   and the allowlist is that published `.gitleaksignore` plus git_autosync's own
   allowlist for the repo (below). A copy in the checkout, or in a local commit, is
   not used; the log notes when it differs. gitleaks is pointed at the repo's `.git`
   directory, because it always reads `.gitleaksignore` from the folder it scans.
+- **autosync never publishes a change to `.gitleaks.toml` or `.gitleaksignore`.** A
+  repo whose unpushed commits (or, in sweep mode, staged changes) touch either file
+  stops with *scanner config changed - review and push it yourself*: once on origin
+  the change is trusted, so pushing it is the owner's review. Only full,
+  commit-pinned fingerprints count from git_autosync's own allowlist.
+- Origin gets exactly the commit that was scanned, pushed by SHA; a commit made
+  while the run was busy waits for the next run. A sweep leaves out the same
+  credential and unscannable files the backup does, and its staged changes are
+  scanned as a commit.
 - `gh` must confirm the backup repo is **private**, once per run, and the repo's own
   git config must not rewrite the URL (`url.*.insteadOf`). Otherwise nothing is
   backed up and the row says **No backup**.
