@@ -51,3 +51,11 @@ Checked and fine: `[ a ] || [ b ] && return` precedence, nested `emit_wt` scopin
 lost to subshells, `set -u`, paths with spaces, overlapping scan roots, dry-run never pushes,
 `unstage` in push-only, deterministic snapshot SHAs with `commit.gpgsign`, older-engine
 summary parsing.
+
+## Re-verification (2026-10-20, at 75b38e9)
+
+All P1/P2 findings fixed (re-run reproductions; suite 147 passed). P3s fixed except P3-3 and
+P3-4 (documented) and P3-8 (partly). New P3s, all fixed after: the BLOCKED reason for a moved
+branch tip now reads "secret in work not yet on GitHub"; a side-branch sweep row says when the
+backup failed; a partial backup gets advice in the Problems dialog. Run time was measured on
+the live repos: a full dry-run over all 19 entries took 54 s.

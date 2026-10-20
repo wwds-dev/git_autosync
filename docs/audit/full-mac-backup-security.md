@@ -51,3 +51,22 @@ dry runs never push; refspecs stay under `refs/backup/<key>/`; `ref_key` is inje
 
 Recommendation: do not run the backup push for real until P0-1, P1-1 and P1-3 are fixed;
 land P1-2 and P2-2 before the scope grows.
+
+## Re-verification (second round, 2026-10-20, at 75b38e9)
+
+Fixed: P0-1, P1-1, P2-1, P2-2, P2-3, P2-4, quote-in-branch, worktree collision, scan-depth
+arithmetic, quoted paths. Partly fixed then: P1-2 (text files under media names, lock files,
+`.env-local` / `env.production` still pushed) and **P1-3, two more routes**: a loosened
+`.gitleaks.toml` in an unpushed local commit, and a commit-less `file:rule:line` line in an
+untracked `.gitleaksignore` (it matches that line in every commit). New P3s: a ref-set race
+between the two scans, and a `git log` error in the identity check reading as "no foreign
+identities". Not fixed: nested repos shown as backed up; PySide6 unpinned.
+
+Fixed after it (orchestrator): scanner rules and allowlist come only from the published
+default branch plus git_autosync's own allowlist file (the GUI's Allowlist button writes it);
+gitleaks scans the `.git` directory so it cannot pick up a checkout's `.gitleaksignore`;
+scanner files inside `.git` stop the scan; the ref set is captured once for both scans; the
+identity check fails closed; lock files, dependency trees, SVGs, text under media names and the
+two `.env` variants are left out. Each has a test; 7 of the new defences were mutation-checked
+(the identity-check fail-closed path is defence in depth behind the `rev-list` checks and has
+no test that can reach it).

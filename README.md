@@ -182,9 +182,12 @@ as "older backup refs kept".
   blocks the whole repo, as any other leak does.
 - A scan whose own git step failed counts as failed, not clean: gitleaks 8.30.1
   exits 0 with "no leaks found" when its `git log` fails.
-- The scanner's rules come from the committed `.gitleaks.toml`, never from the
-  working tree. (`.gitleaksignore` is read from the working tree, so an allowlisted
-  fingerprint works before it is committed; it lists exact findings, not patterns.)
+- What the scanner trusts comes from the **published** repo — its default branch on
+  origin, as last fetched — never from this checkout: `.gitleaks.toml` from there,
+  and the allowlist is that published `.gitleaksignore` plus git_autosync's own
+  allowlist for the repo (below). A copy in the checkout, or in a local commit, is
+  not used; the log notes when it differs. gitleaks is pointed at the repo's `.git`
+  directory, because it always reads `.gitleaksignore` from the folder it scans.
 - `gh` must confirm the backup repo is **private**, once per run, and the repo's own
   git config must not rewrite the URL (`url.*.insteadOf`). Otherwise nothing is
   backed up and the row says **No backup**.
@@ -353,8 +356,10 @@ positive while another is a real secret.
 **If it's a false positive** (a test dummy, an example value, a SQL literal that
 looks like a key):
 - Click **Allowlist**, or **Fix leak…** → **Allowlist (false positive)…**. The
-  app asks first, then adds the fingerprint to `.gitleaksignore`. That is a local
-  file edit: nothing is committed or pushed. The confirmation offers **Undo**, and
+  app asks first, then adds the fingerprint to **git_autosync's own allowlist** for
+  that repo, `~/Library/Application Support/git_autosync/gitleaksignore/<entry>`
+  (outside the repo, so nothing working in a checkout can add to it). Nothing is
+  committed or pushed. The confirmation offers **Undo**, and
   **Fix leak… → Manage allowlist…** removes entries later. The repo is
   re-checked automatically.
 - **Manage allowlist…** shows the entries as a table — File, Line, Rule and a
@@ -381,8 +386,11 @@ looks like a key):
   uncommitted changes. Committed copies of the file will read `[REDACTED]`.
 - Requires `brew install git-filter-repo`.
 
-You can also manage `.gitleaksignore` by hand: one fingerprint per line, in the
-format gitleaks uses (`<commit>:<file>:<rule>:<line>`).
+You can also edit that file by hand: one fingerprint per line, in the format
+gitleaks uses (`<commit>:<file>:<rule>:<line>`), with `<entry>` written the way the
+backup refs are (`sonar%2Fsonar%2Fmacro`). A repo's own committed `.gitleaksignore`
+still counts once it is on origin. (sentinel's two checkout-only test-fixture entries
+were moved there on 2026-10-20, when the gate stopped reading checkouts.)
 
 ---
 
@@ -442,7 +450,7 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
       `git-filter-repo` rewrite. Force-pushes only if the value was already on
       GitHub, and only after a clean rescan.
     - **Manage allowlist…**: a File / Line / Rule / Commit table of
-      `.gitleaksignore` entries, with removal.
+      git_autosync's allowlist entries for the repo, with removal.
     Dialog buttons are sized to their labels, so long labels are no longer
     clipped by macOS's fixed-width message-box buttons.
   - **Pull** button (amber) — appears only when a run reported the repo is behind its
