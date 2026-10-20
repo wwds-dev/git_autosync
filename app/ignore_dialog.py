@@ -18,14 +18,17 @@ from PySide6.QtWidgets import (
 
 
 class IgnoreDialog(QDialog):
-    def __init__(self, parent, repo_dir: Path, finding: dict | None = None):
+    def __init__(self, parent, repo_dir: Path, finding: dict | None = None,
+                 ignore_path: Path | None = None):
         super().__init__(parent)
         self.setWindowTitle(f"Gitleaks ignore — {repo_dir.name}")
         # Wide enough for a path and a rule side by side: the single-column
         # list truncated every entry mid-hash, so the file it referred to —
         # the only part that lets you judge it — was never visible.
         self.resize(820, 420)
-        self._ignore_path = repo_dir / ".gitleaksignore"
+        # git_autosync's own allowlist (paths.allowlist_path); the repo's
+        # .gitleaksignore only counts once it is published on origin.
+        self._ignore_path = ignore_path or (repo_dir / ".gitleaksignore")
         self._finding = finding
 
         layout = QVBoxLayout(self)
@@ -33,9 +36,10 @@ class IgnoreDialog(QDialog):
         info = QLabel(
             "Fingerprints listed here are skipped by gitleaks. "
             "Only add entries you are certain are false positives — "
-            "ignoring a real secret is a security risk. This file is local "
-            "until committed; removing an entry re-enables the block on the "
-            "next scan."
+            "ignoring a real secret is a security risk. git_autosync keeps "
+            "this list on this Mac, outside the repo, so nothing in a working "
+            "tree can add to it; the repo's own .gitleaksignore counts once it "
+            "is on GitHub. Removing an entry re-enables the block on the next scan."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #6E6E73; font-size: 12px;")

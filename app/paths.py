@@ -216,6 +216,30 @@ def subprocess_run(cmd: list[str]) -> int:
     ).returncode
 
 
+def ref_key(s: str) -> str:
+    """The engine's `ref_key`: every byte outside [A-Za-z0-9_-] as %XX.
+
+    Used for git_autosync's per-repo allowlist file name, which the engine
+    finds by the same encoding of the config entry.
+    """
+    return "".join(chr(b) if (48 <= b <= 57 or 65 <= b <= 90 or 97 <= b <= 122
+                               or b in (45, 95)) else f"%{b:02X}"
+                   for b in s.encode())
+
+
+def allowlist_path(entry: str) -> Path:
+    """git_autosync's own gitleaks allowlist for one repo.
+
+    Not the repo's .gitleaksignore: the gate never reads a checkout's copy,
+    because anything that can write to a working tree could then switch the
+    gate off (docs/audit/full-mac-backup-security.md, P1-3). The engine adds
+    the repo's *published* .gitleaksignore to this file's lines.
+    """
+    d = app_support_dir() / "gitleaksignore"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / ref_key(entry)
+
+
 def app_support_dir() -> Path:
     d = Path.home() / "Library" / "Application Support" / "git_autosync"
     d.mkdir(parents=True, exist_ok=True)

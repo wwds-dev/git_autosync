@@ -130,6 +130,17 @@ def advise(name: str, status: str, detail: str) -> Advice | None:
 
 def advise_backup(name: str, state: str, detail: str) -> Advice | None:
     """A repo whose sync was fine but whose backup failed is still at risk."""
+    if state == "partial":
+        return Advice(
+            name,
+            f"{name} — backed up, but not all of it",
+            "Some files were deliberately left out of the backup: credential "
+            "files, formats the secret scanner cannot read, or files over the "
+            "size limit. The log names each one and why.\n\n"
+            f"{detail}\n\n"
+            "If one of them matters, commit it (it is then scanned like any "
+            "commit) or keep your own copy of it.",
+            None, None)
     if state != "failed":
         return None
     return Advice(

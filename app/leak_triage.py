@@ -155,7 +155,7 @@ def describe_block(name: str, finding: dict, where: str) -> str:
         "<b>If it is NOT</b> — a test dummy, an example value, or a string that "
         "only looks like a key (a SQL fragment, say):<br>"
         "&nbsp;&nbsp;Choose <b>Allowlist (false positive)…</b>. That adds this "
-        f"one finding to <code>{name}/.gitleaksignore</code> on this Mac only, "
+        f"one finding to git_autosync's allowlist for <code>{name}</code>, on this Mac only, "
         "and can be undone.<br><br>"
     )
 

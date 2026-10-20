@@ -1376,7 +1376,8 @@ class MainWindow(QMainWindow):
             return
         finding = self._last_findings.get(name)
         if not (finding and finding.get("file")):
-            IgnoreDialog(self, repo_path, finding=finding).exec()
+            IgnoreDialog(self, repo_path, finding=finding,
+                         ignore_path=paths.allowlist_path(name)).exec()
             return
 
         where = leak_triage.locate(repo_path, finding)
@@ -1399,7 +1400,8 @@ class MainWindow(QMainWindow):
         elif real_btn is not None and clicked is real_btn:
             self._purge_secret_from_history(name, repo_path, finding)
         elif clicked is manage_btn:
-            IgnoreDialog(self, repo_path, finding=finding).exec()
+            IgnoreDialog(self, repo_path, finding=finding,
+                         ignore_path=paths.allowlist_path(name)).exec()
 
     def _purge_secret_from_history(self, name: str, repo_path: Path, finding: dict):
         """Replace the flagged value with [REDACTED] in every commit.
@@ -1483,10 +1485,10 @@ class MainWindow(QMainWindow):
                                 "No fingerprint was captured for this finding. "
                                 "Run a dry-run first, then try again.")
             return
-        ignore_path = repo_path / ".gitleaksignore"
+        ignore_path = paths.allowlist_path(name)
         if fp in leak_triage.ignore_entries(ignore_path):
             QMessageBox.information(self, "Already allowlisted",
-                                    "This fingerprint is already in .gitleaksignore.\n"
+                                    "This fingerprint is already in git_autosync's allowlist.\n"
                                     "Run a dry-run to refresh the status.")
             return
 
@@ -1499,8 +1501,9 @@ class MainWindow(QMainWindow):
             f"{loc}  ·  {finding.get('rule') or 'unknown rule'}\n\n"
             "Only do this if the value is NOT a real secret (a test dummy, an "
             "example value, a name that only looks like a key).\n\n"
-            f"This adds one line to {name}/.gitleaksignore on this Mac. Nothing is "
-            "committed or pushed, and you can undo it here or later via "
+            f"This adds one line to git_autosync's allowlist for {name}, kept on "
+            "this Mac outside the repo. Nothing is committed or pushed, and you "
+            "can undo it here or later via "
             f"Fix leak… → Manage allowlist.{pinned}",
         ) != QMessageBox.Yes:
             return
@@ -1508,7 +1511,7 @@ class MainWindow(QMainWindow):
         leak_triage.append_ignore_entry(ignore_path, fp)
         box = QMessageBox(self)
         box.setWindowTitle("Allowlisted")
-        box.setText(f"Added to {name}/.gitleaksignore:\n{fp}\n\n"
+        box.setText(f"Added to git_autosync's allowlist for {name}:\n{fp}\n\n"
                     "A dry-run will now re-check the repo.")
         undo_btn = box.addButton("Undo", QMessageBox.DestructiveRole)
         box.addButton(QMessageBox.Ok)
@@ -1516,7 +1519,7 @@ class MainWindow(QMainWindow):
         box.exec()
         if box.clickedButton() is undo_btn:
             leak_triage.remove_ignore_entry(ignore_path, fp)
-            self.output_pane.appendPlainText(f"\nUndone: {fp} removed from {name}/.gitleaksignore.")
+            self.output_pane.appendPlainText(f"\nUndone: {fp} removed from the allowlist for {name}.")
             return
         self.output_pane.appendPlainText(f"\nAllowlisted {fp} in {name}. Re-checking…")
         self._on_dry_run_single(name)
