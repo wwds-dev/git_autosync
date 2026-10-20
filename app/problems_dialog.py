@@ -18,8 +18,8 @@ class ProblemsDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
 
-        head = QLabel(f"{len(advices)} repo(s) did not sync. Each one below says "
-                      "why, and offers the fix where there is one.")
+        head = QLabel(f"{len(advices)} repo(s) are not synced or not backed up. "
+                      "Each one below says why, and offers the fix where there is one.")
         head.setWordWrap(True)
         outer.addWidget(head)
 

@@ -147,6 +147,26 @@ def _format_git_status(raw: str) -> str:
     return "\n".join(out)
 
 
+
+def _with_backup(status: str, detail: str, backup: dict | None) -> tuple[str, str]:
+    """Fold the repo's backup state into its row.
+
+    A row only says it is fine when everything on this Mac is in the backup
+    repo — branches, every worktree's uncommitted work, stashes. Blocked,
+    errored and skipped rows keep their own status: their problem comes first.
+    No BACKUP line (backups off, or an engine older than this) leaves the row
+    as the engine reported it.
+    """
+    if not backup or status not in ("OK", "SYNCED", "PENDING"):
+        return status, detail
+    note = f"backup {backup['state']}" + (f": {backup['detail']}" if backup["detail"] else "")
+    detail = f"{detail} · {note}" if detail else note
+    if backup["state"] == "failed":
+        return "NOBACKUP", detail
+    if backup["state"] == "missing":   # dry-run: there is something to back up
+        return "PENDING", detail
+    return ("BACKEDUP" if status == "OK" else status), detail
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -646,7 +666,8 @@ class MainWindow(QMainWindow):
         the log — a blocked repo stayed blocked because nothing pointed at the
         triage behind "Fix leak…".
         """
-        advices = collect_advice(summary.get("repos", {}))
+        advices = collect_advice(summary.get("repos", {}), summary.get("backup", {}),
+                                 summary.get("unlisted", []))
         if not advices:
             return
         ProblemsDialog(self, advices, self._run_advice_action).exec()
@@ -1119,16 +1140,22 @@ class MainWindow(QMainWindow):
     def _finish_subset(self):
         # Merge summaries
         merged_repos = {}
-        merged_counts = {"synced": 0, "blocked": 0, "skipped": 0, "errors": 0, "noop": 0}
+        merged_counts = {"synced": 0, "blocked": 0, "skipped": 0, "errors": 0, "noop": 0,
+                         "unlisted": 0}
         merged_findings = {}
+        merged_backup = {}
+        merged_unlisted = []
         worst_exit = 0
         for s in self._subset_summaries:
             merged_repos.update(s.get("repos", {}))
             merged_findings.update(s.get("findings", {}))
+            merged_backup.update(s.get("backup", {}))
+            merged_unlisted += [u for u in s.get("unlisted", []) if u not in merged_unlisted]
             c = s.get("counts") or {}
             for k in merged_counts:
                 merged_counts[k] += c.get(k, 0)
-        merged = {"repos": merged_repos, "counts": merged_counts, "findings": merged_findings}
+        merged = {"repos": merged_repos, "counts": merged_counts, "findings": merged_findings,
+                  "backup": merged_backup, "unlisted": merged_unlisted}
         self._on_finished(worst_exit, merged)
 
     def _append_output(self, text: str):
@@ -1157,6 +1184,8 @@ class MainWindow(QMainWindow):
                 if status == "OK" and ("would sync" in detail
                                        or "would push" in detail):
                     status = "PENDING"
+                status, detail = _with_backup(status, detail,
+                                              summary.get("backup", {}).get(name))
                 row.set_status(status)
                 row.set_blocked(info["status"] == "BLOCKED")
                 row.set_detail(detail or None)
@@ -1201,6 +1230,15 @@ class MainWindow(QMainWindow):
                     f"no-op {c['noop']}")
         else:
             text = "Run finished — see output for details."
+        not_backed = [n for n, b in summary.get("backup", {}).items() if b["state"] != "ok"]
+        unlisted = summary.get("unlisted", [])
+        gaps = []
+        if not_backed:
+            gaps.append(f"{len(not_backed)} repo(s) not fully backed up")
+        if unlisted:
+            gaps.append(f"{len(unlisted)} repo(s) on this Mac not in the list")
+        if gaps:
+            text = "⚠  " + " · ".join(gaps) + "  —  " + text
 
         if exit_code != 0:
             self.summary_label.setStyleSheet(
@@ -1217,6 +1255,11 @@ class MainWindow(QMainWindow):
                 text = f"⚠  {shown}  —  " + text
             else:
                 text = "⚠  Some repos were blocked or errored.  " + text
+        elif gaps:
+            self.summary_label.setStyleSheet(
+                "background:#FFF8E7; color:#92400E; padding:8px 12px;"
+                " border:1px solid #F0D9A8; border-radius:8px;"
+            )
         else:
             self.summary_label.setStyleSheet(
                 "background:#D1F2DC; color:#1A7A3A; padding:8px 12px;"

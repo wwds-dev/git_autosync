@@ -57,6 +57,7 @@ def test_parses_counts():
         "skipped": 1,
         "errors": 0,
         "noop": 0,
+        "unlisted": 0,   # an engine without the field reports none
     }
 
 

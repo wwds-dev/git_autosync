@@ -128,7 +128,36 @@ def advise(name: str, status: str, detail: str) -> Advice | None:
     return None
 
 
-def collect(summary_repos: dict) -> list[Advice]:
+def advise_backup(name: str, state: str, detail: str) -> Advice | None:
+    """A repo whose sync was fine but whose backup failed is still at risk."""
+    if state != "failed":
+        return None
+    return Advice(
+        name,
+        f"{name} — not backed up",
+        "Its side branches and uncommitted work did not reach the backup repo "
+        "(wwds-dev/mac_backup), so they exist only on this Mac.\n\n"
+        f"{detail or 'The log has the raw git output.'}\n\n"
+        "If the backup repo is unreachable, check  gh auth status  and that "
+        "the repo exists; the next run retries.",
+        None, None)
+
+
+def advise_unlisted(path: str, detail: str) -> Advice:
+    no_remote = "no github remote" in (detail or "").lower()
+    return Advice(
+        path,
+        f"{path} — on this Mac, but nothing backs it up",
+        "This repo is not in the repo list, so autosync never looks at it: "
+        "not its branches, not its uncommitted work."
+        + (" It has no GitHub remote either." if no_remote else "")
+        + "\n\nAdd it to the list (with push-only if anyone works in it)"
+        + (", and create its GitHub repo first." if no_remote else "."),
+        None, None)
+
+
+def collect(summary_repos: dict, backup: dict | None = None,
+            unlisted: list | None = None) -> list[Advice]:
     """Advice for every repo in a run that needs attention, worst first."""
     order = {"BLOCKED": 0, "ERROR": 1, "SKIP": 2}
     out = []
@@ -136,4 +165,10 @@ def collect(summary_repos: dict) -> list[Advice]:
         a = advise(name, info.get("status", ""), info.get("detail", ""))
         if a:
             out.append((order.get(info.get("status"), 9), name, a))
+    for name, info in (backup or {}).items():
+        a = advise_backup(name, info.get("state", ""), info.get("detail", ""))
+        if a and not any(n == name for _, n, _ in out):
+            out.append((1, name, a))
+    for u in unlisted or []:
+        out.append((3, u["path"], advise_unlisted(u["path"], u.get("detail", ""))))
     return [a for _, _, a in sorted(out, key=lambda x: (x[0], x[1]))]

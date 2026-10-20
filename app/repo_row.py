@@ -11,6 +11,10 @@ _BADGE = {
     "SKIP":     ("#F0F0F5", "#6E6E73", "⊘ Skipped"),
     "ERROR":    ("#FFF0E0", "#B45309", "⚠ Error"),
     "OK":       ("#F0F0F5", "#6E6E73", "Clean"),
+    # OK/SYNCED *and* every branch, worktree and stash in the backup repo.
+    # "Clean" alone only ever meant the checked-out branch matched origin.
+    "BACKEDUP": ("#D1F2DC", "#1A7A3A", "✓ Backed up"),
+    "NOBACKUP": ("#FFF0E0", "#B45309", "⚠ No backup"),
     "PENDING":  ("#EEF4FF", "#2563EB", "● Pending"),
     "MISSING":  ("#FFE5E3", "#C0392B", "⚠ Missing"),
 }

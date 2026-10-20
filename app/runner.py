@@ -11,7 +11,13 @@ STATUS_RE = re.compile(
 )
 COUNTS_RE = re.compile(
     r"synced=(\d+)\s+blocked=(\d+)\s+skipped=(\d+)\s+errors=(\d+)\s+noop=(\d+)"
+    r"(?:\s+unlisted=(\d+))?"
 )
+# One per repo the engine reached: whether everything on this Mac is in the
+# backup repo, not just whether the checked-out branch matches origin.
+BACKUP_RE = re.compile(r"\|\s+BACKUP\s+(\S+)\s+\((ok|missing|failed)(?::\s*(.*))?\)")
+# A repo on disk that is not in the list, so nothing backs it up.
+UNLISTED_RE = re.compile(r"\|\s+UNLISTED\s+(\S+)(?:\s+\((.*)\))?")
 REPO_HEADER_RE = re.compile(r"REPO: (\S+)")
 FILE_RE        = re.compile(r"^File:\s*(.+)$")
 RULE_RE        = re.compile(r"^RuleID:\s*(.+)$")
@@ -26,7 +32,8 @@ def parse_summary(text: str) -> dict:
     repos) the first gitleaks finding's file/rule from script output.
 
     Returns {"repos": {name: {"status", "detail"}}, "counts": {...},
-    "findings": {name: {"file", "rule"}}}.
+    "findings": {name: {"file", "rule"}}, "backup": {name: {"state", "detail"}},
+    "unlisted": [{"path", "detail"}]}.
     Per-repo statuses only consider lines from the SUMMARY: block onward, so
     progress chatter earlier in the log can't be mistaken for the final
     result — but findings are extracted from the full per-repo sections
@@ -43,6 +50,15 @@ def parse_summary(text: str) -> dict:
             status, name, detail = m.groups()
             repos[name] = {"status": status, "detail": detail or ""}
 
+    backup = {}
+    unlisted = []
+    for line in tail.splitlines():
+        if m := BACKUP_RE.search(line):
+            name, state, detail = m.groups()
+            backup[name] = {"state": state, "detail": detail or ""}
+        elif m := UNLISTED_RE.search(line):
+            unlisted.append({"path": m.group(1), "detail": m.group(2) or ""})
+
     counts = None
     m = COUNTS_RE.search(tail)
     if m:
@@ -52,6 +68,7 @@ def parse_summary(text: str) -> dict:
             "skipped": int(m.group(3)),
             "errors": int(m.group(4)),
             "noop": int(m.group(5)),
+            "unlisted": int(m.group(6) or 0),
         }
 
     # gitleaks --verbose prints RuleID: before File: for each finding, so
@@ -89,7 +106,8 @@ def parse_summary(text: str) -> dict:
                 "secret": pending_secret,
             }
 
-    return {"repos": repos, "counts": counts, "findings": findings}
+    return {"repos": repos, "counts": counts, "findings": findings,
+            "backup": backup, "unlisted": unlisted}
 
 
 class AutosyncRunner(QObject):
