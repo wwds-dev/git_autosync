@@ -63,6 +63,10 @@ def run(root: Path, config_text: str, *extra: str, gitleaks: str = "/usr/bin/tru
         "GITLEAKS_CMD": gitleaks,
         "AUTOSYNC_BACKUP_REMOTE": str(root / "backup.git"),
         "AUTOSYNC_SCAN_ROOTS": scan_roots,
+        # A local bare repo stands in for the private GitHub one; the real
+        # engine refuses a local path unless told this is a test.
+        "AUTOSYNC_BACKUP_ALLOW_LOCAL": "1",
+        "AUTOSYNC_ALLOWED_EMAILS": "t@example.com 243015673+wwds-dev@users.noreply.github.com",
         **env_extra,
     }
     result = subprocess.run(["bash", str(ENGINE), *extra], capture_output=True,
@@ -93,6 +97,12 @@ def fingerprint(repo: Path) -> str:
 
 
 PREFIX = "refs/backup/proj"
+
+
+def _ref_key(s: str) -> str:
+    """The engine's encoding: every byte outside [A-Za-z0-9_-] as %XX."""
+    return "".join(chr(b) if chr(b).isascii() and (chr(b).isalnum() or chr(b) in "_-")
+                   else f"%{b:02X}" for b in s.encode())
 
 
 class TestBranches:
@@ -168,10 +178,11 @@ class TestUncommittedWork:
         assert git(backup, "show", f"{snap}:README.md") == "edited, not committed"
         assert git(backup, "rev-parse", f"{snap}^") == git(repo, "rev-parse", "HEAD")
 
-    def test_a_clean_tree_has_no_snapshot(self, ws):
+    def test_a_clean_tree_points_its_wip_ref_at_head(self, ws):
+        """Not dropped: that is what backs up commits on a detached HEAD."""
         root, repo, backup = ws
         run(root, "proj  push-only\n")
-        assert f"{PREFIX}/wip/main" not in backup_refs(backup)
+        assert backup_refs(backup)[f"{PREFIX}/wip/main"] == git(repo, "rev-parse", "HEAD")
 
     def test_an_unchanged_tree_is_not_pushed_again(self, ws):
         """Snapshot SHAs are deterministic, or every night re-pushes everything."""
@@ -194,7 +205,9 @@ class TestUncommittedWork:
         result = run(root, "proj  push-only\n")
 
         assert result.returncode == 0, result.stdout[-1500:]
-        snap = backup_refs(backup)[f"{PREFIX}/wip/wt/my_wt"]
+        # Keyed by git's own worktree id, not the folder name, which is not unique.
+        wt_id = Path(git(wt, "rev-parse", "--absolute-git-dir")).name
+        snap = backup_refs(backup)[f"{PREFIX}/wip/wt/{_ref_key(wt_id)}"]
         assert "in_worktree.txt" in git(backup, "ls-tree", "-r", "--name-only", snap)
 
     def test_a_stash_with_untracked_files_is_flattened(self, ws):
@@ -221,7 +234,8 @@ class TestUncommittedWork:
 
         files = git(backup, "ls-tree", "-r", "--name-only", backup_refs(backup)[f"{PREFIX}/wip/main"])
         assert "small.txt" in files and "big.bin" not in files
-        assert "1 big file(s) left out" in result.stdout
+        assert "left out big.bin (over the size limit)" in result.stdout + result.stderr
+        assert "BACKUP  proj  (partial:" in result.stdout, "a backup with files left out is not 'ok'"
 
 
 class TestDryRun:
@@ -336,3 +350,271 @@ class TestUnlistedRepos:
         result = run(root, "proj  push-only\n", "--repo", "proj",
                      scan_roots=f"{root / 'active'}=4")
         assert "UNLISTED" not in result.stdout
+
+
+# ----------------------------------------------------------------------
+# Review and security findings, 2026-10-20 (docs/audit/full-mac-backup-*.md)
+# ----------------------------------------------------------------------
+def _commit(repo: Path, name: str, text: str, msg: str, **identity) -> str:
+    (repo / name).write_text(text)
+    git(repo, "add", name)
+    env = {}
+    if identity:
+        env = {"GIT_AUTHOR_EMAIL": identity["email"], "GIT_COMMITTER_EMAIL": identity["email"]}
+    git(repo, "commit", "-qm", msg, env=env)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def _token() -> str:
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    return "ghp_" + "".join(secrets.choice(alphabet) for _ in range(36))
+
+
+def _stub(root: Path, name: str, body: str) -> str:
+    p = root / name
+    p.write_text("#!/bin/bash\n" + body)
+    p.chmod(0o755)
+    return str(p)
+
+
+class TestTheScannerFailsClosed:
+    def test_an_error_gitleaks_reports_but_exits_0_on_is_a_scanner_error(self, ws):
+        """gitleaks 8.30.1 exits 0 with "no leaks found" when its git log fails."""
+        root, repo, backup = ws
+        (repo / "w.txt").write_text("w\n")
+        fake = _stub(root, "gl", 'echo "9:16PM ERR [git] fatal: bad object refs/tags/broken"\n'
+                                 'echo "9:16PM INF no leaks found"\nexit 0\n')
+        result = run(root, "proj  push-only\n", gitleaks=fake)
+        assert "ERROR   proj  (scanner error)" in result.stdout
+        assert backup_refs(backup) == {}
+
+    def test_a_ref_git_cannot_read_stops_the_repo(self, ws):
+        root, repo, backup = ws
+        (repo / ".git" / "refs" / "tags").mkdir(parents=True, exist_ok=True)
+        (repo / ".git" / "refs" / "tags" / "broken").write_text("1" * 40 + "\n")
+        result = run(root, "proj  push-only\n")
+        assert "ERROR   proj  (scanner error)" in result.stdout
+        assert backup_refs(backup) == {}
+
+
+@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
+class TestTheGateCannotBeTalkedAround:
+    def test_a_branch_tip_moved_mid_run_is_still_scanned(self, ws):
+        """Plan records the tip, an agent amends the secret away before the
+        scan; the recorded commit must not be pushed unscanned."""
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "s")
+        _commit(repo, "cfg.txt", f'token = "{_token()}"\n', "oops")
+        git(repo, "checkout", "-q", "main")
+        # On the first scan, not on `gitleaks version` at start-up: that is
+        # after the plan has recorded the tip.
+        wrapper = _stub(root, "gl", f'if [ "$1" = git ] && [ ! -f "{root}/moved" ]; then touch "{root}/moved"; '
+                                    f'git -C "{repo}" branch -f s main; fi\n'
+                                    f'exec "{GITLEAKS}" "$@"\n')
+        result = run(root, "proj  push-only\n", gitleaks=wrapper)
+        assert "BLOCKED proj" in result.stdout, result.stdout[-1500:]
+        assert backup_refs(backup) == {}
+
+    def test_an_untracked_gitleaks_config_does_not_switch_the_gate_off(self, ws):
+        root, repo, backup = ws
+        (repo / ".gitleaks.toml").write_text("[allowlist]\npaths = ['''.*''']\n")
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED proj" in result.stdout, result.stdout[-1500:]
+        assert backup_refs(backup) == {}
+
+    def test_a_secret_typed_only_in_a_merge_resolution_is_found(self, ws):
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "b")
+        _commit(repo, "f.txt", "b\n", "b")
+        git(repo, "checkout", "-q", "main")
+        _commit(repo, "f.txt", "m\n", "m")
+        subprocess.run(["git", "-C", str(repo), "merge", "-q", "b"], capture_output=True)
+        (repo / "f.txt").write_text(f'token = "{_token()}"\n')
+        git(repo, "add", "f.txt")
+        git(repo, "commit", "-qm", "merge b")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED proj  (secret in history" in result.stdout, result.stdout[-1500:]
+
+
+class TestWhatIsLeftOut:
+    def test_credentials_documents_databases_and_binaries_stay_on_the_mac(self, ws):
+        root, repo, backup = ws
+        (repo / ".env.local").write_text("DB_PASSWORD=correcthorse42\n")
+        (repo / ".netrc").write_text("machine x login y password z\n")
+        (repo / "id_service.der").write_bytes(b"0\x82\x01")
+        (repo / "app.db").write_bytes(b"SQLite format 3\0")
+        (repo / "notes.pdf").write_text("%PDF-1.4 token\n")
+        (repo / "blob.bin").write_bytes(b"\0\1\2\3" * 64)
+        (repo / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\0\0")
+        (repo / "keep.py").write_text("x = 1\n")
+        result = run(root, "proj  push-only\n")
+        files = set(git(backup, "ls-tree", "-r", "--name-only",
+                        backup_refs(backup)[f"{PREFIX}/wip/main"]).splitlines())
+        assert {"keep.py", "logo.png"} <= files
+        assert not files & {".env.local", ".netrc", "id_service.der", "app.db", "notes.pdf", "blob.bin"}
+        assert "BACKUP  proj  (partial:" in result.stdout
+        assert "6 file(s) left out" in result.stdout
+
+    def test_big_files_with_odd_names_or_grown_in_place_are_left_out(self, ws):
+        root, repo, backup = ws
+        (repo / "Übersicht.txt").write_text("x" * 5000)
+        (repo / "README.md").write_text("y" * 5000)   # tracked, grown
+        run(root, "proj  push-only\n", AUTOSYNC_BACKUP_MAX_BYTES="1024")
+        snap = backup_refs(backup)[f"{PREFIX}/wip/main"]
+        assert "bersicht" not in git(backup, "ls-tree", "-r", "--name-only", snap)
+        assert git(backup, "show", f"{snap}:README.md") == "start", (
+            "a grown tracked file must go back to its committed version")
+
+    def test_a_stash_all_does_not_carry_ignored_files(self, ws):
+        root, repo, backup = ws
+        (repo / ".env").write_text("DB_PASSWORD=x\n")
+        (repo / "kept.txt").write_text("k\n")
+        git(repo, "stash", "push", "-q", "-a")
+        w = git(repo, "rev-parse", "refs/stash")
+        run(root, "proj  push-only\n")
+        files = git(backup, "ls-tree", "-r", "--name-only", backup_refs(backup)[f"{PREFIX}/stash/{w}"])
+        assert "kept.txt" in files and ".env" not in files
+
+
+class TestWhereItMayPush:
+    def test_a_public_backup_repo_is_refused(self, ws):
+        root, repo, backup = ws
+        gh = _stub(root, "gh", 'echo PUBLIC\n')
+        result = run(root, "proj  push-only\n", AUTOSYNC_BACKUP_REMOTE="https://github.com/x/y.git",
+                     GH_CMD=gh)
+        assert "cannot confirm the backup repo is private" in result.stdout
+        assert result.returncode != 0
+
+    def test_a_local_path_is_refused_outside_tests(self, ws):
+        root, repo, backup = ws
+        result = run(root, "proj  push-only\n", AUTOSYNC_BACKUP_ALLOW_LOCAL="0")
+        assert "BACKUP  proj  (failed:" in result.stdout
+        assert backup_refs(backup) == {}
+
+    def test_a_url_rewrite_in_the_repo_config_is_refused(self, ws):
+        root, repo, backup = ws
+        elsewhere = root / "elsewhere.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(elsewhere)], check=True)
+        git(repo, "config", f"url.{elsewhere}.insteadOf", str(backup))
+        result = run(root, "proj  push-only\n")
+        assert "redirects the backup URL" in result.stdout
+        assert backup_refs(elsewhere) == {}
+
+    def test_a_commit_by_another_identity_is_not_pushed(self, ws):
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "side")
+        _commit(repo, "x.py", "x\n", "by someone else", email="real.person@example.org")
+        result = run(root, "proj  push-only\n")
+        assert "identity that may not be pushed" in result.stdout
+        assert backup_refs(backup) == {}
+
+    def test_claudes_noreply_identity_is_allowed_when_listed(self, ws):
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "side")
+        _commit(repo, "x.py", "x\n", "by claude", email="noreply@anthropic.com")
+        run(root, "proj  push-only\n",
+            AUTOSYNC_ALLOWED_EMAILS="t@example.com noreply@anthropic.com")
+        assert f"{PREFIX}/heads/side" in backup_refs(backup)
+
+
+class TestRefNames:
+    def test_two_worktrees_with_the_same_folder_name_both_get_backed_up(self, ws):
+        root, repo, backup = ws
+        for parent in ("a", "b"):
+            wt = root / parent / "feat"
+            git(repo, "worktree", "add", "-q", "--detach", str(wt))
+            (wt / f"{parent}.txt").write_text(parent)
+        result = run(root, "proj  push-only\n")
+        assert result.returncode == 0, result.stdout[-1500:]
+        assert len([r for r in backup_refs(backup) if "/wip/wt/" in r]) == 2
+
+    def test_a_home_relative_entry_can_be_backed_up(self, ws):
+        root, repo, backup = ws
+        result = run(root, "~/active/proj  push-only\n", HOME=str(root))
+        assert "BACKUP  ~/active/proj  (ok:" in result.stdout, result.stdout[-1500:]
+        assert any(r.startswith("refs/backup/%7E%2Factive%2Fproj/") for r in backup_refs(backup))
+
+    def test_a_branch_with_a_quote_in_its_name(self, ws):
+        root, repo, backup = ws
+        git(repo, "branch", "it's-fine")
+        run(root, "proj  push-only\n")
+        assert f"{PREFIX}/heads/it's-fine" in backup_refs(backup)
+
+
+class TestWhatTheWipRefMeans:
+    def test_commits_on_a_detached_head_are_backed_up(self, ws):
+        root, repo, backup = ws
+        wt = root / "det"
+        git(repo, "worktree", "add", "-q", "--detach", str(wt))
+        tip = _commit(wt, "d.py", "d\n", "only on a detached head")
+        run(root, "proj  push-only\n")
+        assert tip in backup_refs(backup).values()
+
+    def test_an_old_snapshot_is_replaced_once_the_work_is_committed(self, ws):
+        """Otherwise restoring wip/main writes older files over committed work."""
+        root, repo, backup = ws
+        (repo / "README.md").write_text("draft\n")
+        run(root, "proj  push-only\n")
+        head = _commit(repo, "README.md", "final\n", "final")
+        run(root, "proj  push-only\n")
+        assert backup_refs(backup)[f"{PREFIX}/wip/main"] == head
+
+
+class TestReposOriginCannotTake:
+    def test_a_listed_repo_without_a_remote_is_still_backed_up(self, ws):
+        root, repo, backup = ws
+        git(repo, "remote", "remove", "origin")
+        result = run(root, "proj  push-only\n")
+        assert "SKIP    proj  (no GitHub remote)" in result.stdout
+        assert f"{PREFIX}/heads/main" in backup_refs(backup)
+
+    def test_a_repo_mid_conflict_is_backed_up_and_still_an_error(self, ws):
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "b")
+        _commit(repo, "f.txt", "b\n", "b")
+        git(repo, "checkout", "-q", "main")
+        _commit(repo, "f.txt", "m\n", "m")
+        subprocess.run(["git", "-C", str(repo), "merge", "-q", "b"], capture_output=True)
+        before = fingerprint(repo)
+        result = run(root, "proj\n")
+        assert "ERROR   proj  (unresolved conflict" in result.stdout
+        assert f"{PREFIX}/wip/main" in backup_refs(backup)
+        assert fingerprint(repo) == before, "a conflicted tree was staged"
+
+    def test_a_sweep_on_a_published_side_branch_leaves_origin_alone(self, ws):
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "fix/x")
+        git(repo, "push", "-q", "-u", "origin", "fix/x")
+        _commit(repo, "y.py", "y\n", "local commit")
+        on_origin = git(repo, "rev-parse", "origin/fix/x")
+        result = run(root, "proj\n")
+        assert git(repo, "ls-remote", "origin", "refs/heads/fix/x").split()[0] == on_origin
+        assert "backed up only" in result.stdout
+
+    def test_a_fresh_index_lock_is_left_alone(self, ws):
+        root, repo, backup = ws
+        lock = repo / ".git" / "index.lock"
+        lock.write_text("")
+        run(root, "proj\n")
+        assert lock.exists(), "another git command's live lock was removed"
+
+
+class TestOtherHardening:
+    def test_a_failing_pre_push_hook_does_not_stop_the_backup(self, ws):
+        root, repo, backup = ws
+        hook = repo / ".git" / "hooks" / "pre-push"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        run(root, "proj  push-only\n")
+        assert f"{PREFIX}/heads/main" in backup_refs(backup)
+
+    def test_a_scan_depth_that_is_not_a_number_is_ignored(self, ws):
+        root, repo, backup = ws
+        marker = root / "pwned"
+        result = run(root, "proj  push-only\n",
+                     scan_roots=f"{root / 'active'}=a[$(touch {marker})]")
+        assert not marker.exists()
+        assert "depth is not a number" in result.stdout
