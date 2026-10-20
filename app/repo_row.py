@@ -15,6 +15,9 @@ _BADGE = {
     # "Clean" alone only ever meant the checked-out branch matched origin.
     "BACKEDUP": ("#D1F2DC", "#1A7A3A", "✓ Backed up"),
     "NOBACKUP": ("#FFF0E0", "#B45309", "⚠ No backup"),
+    # Pushed, but files were left out (credentials, unscannable, too big) or a
+    # worktree could not be read: the hover text says which.
+    "PARTIAL":  ("#FFF8E7", "#92400E", "⚠ Partial"),
     "PENDING":  ("#EEF4FF", "#2563EB", "● Pending"),
     "MISSING":  ("#FFE5E3", "#C0392B", "⚠ Missing"),
 }

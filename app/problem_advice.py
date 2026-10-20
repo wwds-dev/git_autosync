@@ -135,11 +135,12 @@ def advise_backup(name: str, state: str, detail: str) -> Advice | None:
     return Advice(
         name,
         f"{name} — not backed up",
-        "Its side branches and uncommitted work did not reach the backup repo "
-        "(wwds-dev/mac_backup), so they exist only on this Mac.\n\n"
+        "Its side branches and uncommitted work did not reach the backup repo, "
+        "so they exist only on this Mac.\n\n"
         f"{detail or 'The log has the raw git output.'}\n\n"
-        "If the backup repo is unreachable, check  gh auth status  and that "
-        "the repo exists; the next run retries.",
+        "If the backup repo is unreachable or cannot be confirmed private, "
+        "check  gh auth status  and that the repo exists and is private; the "
+        "next run retries.",
         None, None)
 
 

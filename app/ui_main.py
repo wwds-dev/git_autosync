@@ -165,6 +165,8 @@ def _with_backup(status: str, detail: str, backup: dict | None) -> tuple[str, st
         return "NOBACKUP", detail
     if backup["state"] == "missing":   # dry-run: there is something to back up
         return "PENDING", detail
+    if backup["state"] == "partial":
+        return "PARTIAL", detail
     return ("BACKEDUP" if status == "OK" else status), detail
 
 class MainWindow(QMainWindow):

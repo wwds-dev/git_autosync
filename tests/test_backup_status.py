@@ -12,6 +12,8 @@ OUTPUT = """\
 2026-10-20 20:40:01 |    SYNCED  sonar
 2026-10-20 20:40:01 |    BACKUP  imprint  (missing: 4 ref(s) not backed up yet)
 2026-10-20 20:40:01 |    OK      imprint  (dry-run: nothing to push)
+2026-10-20 20:40:01 |    BACKUP  provisio  (partial: 2 branch(es); 1 file(s) left out - see log)
+2026-10-20 20:40:01 |    OK      provisio  (nothing to push)
 2026-10-20 20:40:01 |    UNLISTED ~/Documents/Websites/shopfront  (not in the repo list; no GitHub remote)
 2026-10-20 20:40:01 | synced=1 blocked=0 skipped=0 errors=1 noop=2 unlisted=1
 """
@@ -39,6 +41,8 @@ def test_row_status_follows_the_backup():
     assert _with_backup("OK", "", s["backup"]["sentinel"])[0] == "BACKEDUP"
     assert _with_backup("SYNCED", "", s["backup"]["sonar"])[0] == "NOBACKUP"
     assert _with_backup("OK", "dry-run", s["backup"]["imprint"])[0] == "PENDING"
+    # Files left out: never "Backed up".
+    assert _with_backup("OK", "", s["backup"]["provisio"])[0] == "PARTIAL"
     # A blocked repo's own problem comes first.
     assert _with_backup("BLOCKED", "secret", s["backup"]["sonar"])[0] == "BLOCKED"
     # No BACKUP line: the row is what the engine said, never a claim of backup.

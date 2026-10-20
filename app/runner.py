@@ -15,7 +15,7 @@ COUNTS_RE = re.compile(
 )
 # One per repo the engine reached: whether everything on this Mac is in the
 # backup repo, not just whether the checked-out branch matches origin.
-BACKUP_RE = re.compile(r"\|\s+BACKUP\s+(\S+)\s+\((ok|missing|failed)(?::\s*(.*))?\)")
+BACKUP_RE = re.compile(r"\|\s+BACKUP\s+(\S+)\s+\((ok|partial|missing|failed)(?::\s*(.*))?\)")
 # A repo on disk that is not in the list, so nothing backs it up.
 UNLISTED_RE = re.compile(r"\|\s+UNLISTED\s+(\S+)(?:\s+\((.*)\))?")
 REPO_HEADER_RE = re.compile(r"REPO: (\S+)")
@@ -162,8 +162,9 @@ class AutosyncRunner(QObject):
         env.insert("AUTOSYNC_LOG_DIR", str(paths.user_log_dir()))
         env.insert("AUTOSYNC_STATE_DIR", str(paths.app_support_dir()))
         env.insert("GITLEAKS_CMD", gitleaks_cmd)
-        if create_remote:
-            env.insert("GH_CMD", paths.find_gh() or "gh")
+        # Always: the engine asks gh whether the backup repo is still private
+        # before pushing to it, and fails closed when gh cannot be found.
+        env.insert("GH_CMD", paths.find_gh() or "gh")
         if commit_message:
             env.insert("AUTOSYNC_COMMIT_MSG", commit_message)
         process.setProcessEnvironment(env)
