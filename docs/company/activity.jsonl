@@ -14,3 +14,7 @@
 {"ts": "2026-10-14T02:49:53", "phase": "release", "state": "blocked", "spec": "tray-menu-only"}
 {"ts": "2026-10-14T06:17:00", "phase": "release", "state": "start", "spec": "tray-menu-only"}
 {"ts": "2026-10-14T06:18:54", "phase": "release", "state": "done", "spec": "tray-menu-only"}
+{"ts": "2026-10-20T20:28:34", "phase": "define", "state": "start", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T20:30:25", "phase": "define", "state": "blocked", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T20:33:45", "phase": "define", "state": "done", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T20:33:45", "phase": "architect", "state": "done", "spec": "full-mac-backup"}
