@@ -18,3 +18,8 @@
 {"ts": "2026-10-20T20:30:25", "phase": "define", "state": "blocked", "spec": "full-mac-backup"}
 {"ts": "2026-10-20T20:33:45", "phase": "define", "state": "done", "spec": "full-mac-backup"}
 {"ts": "2026-10-20T20:33:45", "phase": "architect", "state": "done", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T20:46:48", "phase": "build", "state": "done", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T21:16:48", "phase": "review", "state": "done", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T21:16:48", "phase": "secure", "state": "start", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T21:33:43", "phase": "secure", "state": "done", "spec": "full-mac-backup"}
+{"ts": "2026-10-20T21:33:43", "phase": "document", "state": "done", "spec": "full-mac-backup"}

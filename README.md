@@ -11,7 +11,9 @@ How changes are made (spec, review, verify and release phases, and the owner's
 approval gates) is in `AGENTS.md`; specs, review reports and role playbooks live in
 `docs/specs/`, `docs/audit/` and `docs/playbooks/`.
 Tests live in `tests/`: the engine is driven against throwaway repos in
-`test_push_only.py`, summary parsing is in `test_runner.py`, and
+`test_push_only.py` and `test_backup_refs.py` (backups, the snapshot gate, the
+sweep side-branch rule, unlisted repos, a full restore), summary parsing is in
+`test_runner.py` and `test_backup_status.py`, and
 `test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
 to check header labels fit, rows are banded on screen, Pull buttons survive a list
 rebuild, the tray uses the native menu with nothing wired to the click, **Open git_autosync**
@@ -106,7 +108,7 @@ imprint  push-only
 
 | Mode | What it does |
 |---|---|
-| **sweep** (default) | `git add -A`, commit everything as `autosync: <timestamp>`, push. |
+| **sweep** (default) | `git add -A`, commit everything as `autosync: <timestamp>`, push. Only on the default branch: on any other branch, or a detached HEAD, nothing is committed, origin is left alone and the work goes to the backup repo instead. A fresh `index.lock` (another git command running) also means nothing is committed that run; one older than 10 minutes is removed. |
 | **push-only** | Push commits that already exist. Never stages, never commits, never publishes a branch that has no upstream. |
 
 Use **push-only** for any repo a person or an agent is actively working in.
@@ -128,6 +130,95 @@ The gitleaks **history** scan runs in both modes — it covers everything about
 to be published. The **staged** scan is skipped in push-only, because nothing
 is staged and scanning an empty index would report a clean result that was
 never actually performed.
+
+## Backing up everything on this Mac
+
+Pushing the checked-out branch is not a backup of the Mac: side branches,
+uncommitted edits, untracked files and other worktrees used to stay here
+(on 2026-10-20: 48 local-only commits across six repos, 37 uncommitted files,
+and dozens of worktrees nothing looked at). So every run also copies, for each
+listed repo:
+
+| What | Backup ref |
+|---|---|
+| every local branch | `refs/backup/<entry>/heads/<branch>` |
+| the main worktree | `refs/backup/<entry>/wip/main` |
+| each linked worktree | `refs/backup/<entry>/wip/wt/<worktree id>` |
+| each stash entry | `refs/backup/<entry>/stash/<sha>` |
+
+`<entry>` is the config entry with every byte outside `A-Z a-z 0-9 _ -` written as
+`%XX` (`sonar%2Fsonar%2Fmacro`, `%7E%2FDocuments%2F…` for a `~/` entry); the
+worktree id is git's own (`.git/worktrees/<id>`), because folder names repeat.
+A worktree's `wip` ref is a commit on its `HEAD` holding its uncommitted work —
+tracked edits and untracked files `.gitignore` does not exclude — or, when it is
+clean, its `HEAD` itself. So commits on a detached `HEAD` are backed up too, and
+the `wip` ref never holds an old snapshot of work that has since been committed.
+A file staged and then edited again is kept in its edited form only.
+
+**Left out, and named in the log:** ignored files (also inside a `stash -a`),
+credential files by name (`.env*`, `.netrc`, `.npmrc`, `*.pem`, `*.key`, `*.p12`,
+`*.der`, `id_rsa*`, anything under `.ssh/`, `.aws/`, …), formats gitleaks does not
+read (`*.db`, `*.sqlite*`, `*.pdf`, Office files, archives), any other new binary
+file except images, audio, video and fonts, and files over 50 MB. A changed tracked
+file in one of those groups goes back to its committed version. The row then says
+**Partial**, not **Backed up**, because the claim would not be true.
+
+**They go to one private repo, `github.com/wwds-dev/mac_backup`, never to
+`origin`** (`docs/adr/0001-backup-refs-in-private-repo.md`). A hidden ref is only
+hidden from GitHub's web UI; on a public repo anyone can fetch it.
+`AUTOSYNC_BACKUP_REMOTE` overrides the URL, and an empty value switches backups off.
+
+Nothing in the source repo changes: snapshots are built in a temporary index,
+pushed by SHA to the URL, and the working tree, index, `HEAD`, branches, stash
+and git config are left exactly as they were. Snapshot commits carry the dates of
+the commit they sit on, so an unchanged worktree produces the same commit and a
+quiet night pushes nothing. Backups of branches deleted here are kept, and counted
+as "older backup refs kept".
+
+**Before anything is pushed:**
+- gitleaks scans the history (merges included, as remerge diffs) and then exactly
+  the commits the backup would push that no ref reaches — the snapshots, and any
+  branch tip that moved while the run was planning. A secret in an untracked file
+  blocks the whole repo, as any other leak does.
+- A scan whose own git step failed counts as failed, not clean: gitleaks 8.30.1
+  exits 0 with "no leaks found" when its `git log` fails.
+- The scanner's rules come from the committed `.gitleaks.toml`, never from the
+  working tree. (`.gitleaksignore` is read from the working tree, so an allowlisted
+  fingerprint works before it is committed; it lists exact findings, not patterns.)
+- `gh` must confirm the backup repo is **private**, once per run, and the repo's own
+  git config must not rewrite the URL (`url.*.insteadOf`). Otherwise nothing is
+  backed up and the row says **No backup**.
+- Every commit about to be pushed must be authored and committed by an address in
+  `AUTOSYNC_ALLOWED_EMAILS` (default: the `wwds-dev` noreply address and
+  `noreply@anthropic.com`), so a commit carrying a real address never reaches GitHub.
+
+A listed repo with no `origin`, or with a conflict in progress, is still backed up;
+only its origin push is skipped. Pre-push hooks do not run for the backup push.
+
+Each row then says **Backed up** only when all of that is in the backup repo.
+A dry-run shows **Pending** for a repo with something not yet backed up;
+**No backup** means the backup push failed.
+
+**Repos nothing backs up.** At the end of a full run the engine looks for git
+repos that are not in the list under `active/` (4 levels), the lab root itself and
+`~/Documents/Websites/` (2 levels), and reports each as `UNLISTED`, with "no
+GitHub remote" when that applies. They count toward the tray's attention state.
+Linked worktrees are not reported: they belong to their repo. Override the roots
+with `AUTOSYNC_SCAN_ROOTS="<dir>=<depth>:..."` (empty switches it off).
+
+### Restoring
+
+```bash
+git clone https://github.com/wwds-dev/<repo>.git && cd <repo>
+git fetch https://github.com/wwds-dev/mac_backup.git '+refs/backup/<entry>/*:refs/backup/*'
+git branch fix/thing refs/backup/heads/fix/thing        # a side branch
+git checkout refs/backup/wip/main -- .                  # the uncommitted work, into the tree
+```
+
+`wip/main` sits on the branch tip it was taken from, so checking it out over that
+branch is safe. For a repo with no `origin`, fetch the same refs into an empty
+`git init` instead. `git ls-remote https://github.com/wwds-dev/mac_backup.git`
+lists everything that is there.
 
 ## Publishing a new project to GitHub
 
@@ -224,17 +315,22 @@ history anyone reads. Two limits worth knowing before adding a project:
 * **Sweep mode writes the commit message.** Everything in the tree lands as
   `autosync: <timestamp>`. If the work deserved a message, use `push-only` and
   commit it yourself.
-* **It pushes the branch that happens to be checked out.** In sweep mode a
-  branch with no upstream is published, which on a feature-branch repo means a
-  timer can make work in progress public. `push-only` declines instead.
+* **It pushes the branch that happens to be checked out, to `origin`.** It never
+  publishes a new branch there: sweep commits only on the default branch, and
+  push-only declines a branch with no upstream. Side branches and work in
+  progress go to the private backup repo instead (see above).
 
 ## How it stays safe
 
 - Secrets in *new changes* → blocked before the commit is ever made.
 - Secrets already in *history* → blocked before any push.
+- Secrets in *uncommitted work* (any worktree, untracked files, stashes) → blocked
+  before anything, backup included, is pushed.
 - gitleaks errors (can't run) → treated as failure, repo skipped — never a silent pass.
 - `--dry-run` makes zero changes to your repos or GitHub. (It does `git fetch origin`,
-  which only updates your local copy of the remote's branches.)
+  which only updates your local copy of the remote's branches, and `git ls-remote`
+  on the backup repo.) Before 2026-10-20 a push-only dry-run unstaged whatever you
+  had staged; it no longer touches the index outside sweep mode.
 - `--create-remote` runs through the same gate before `gh repo create --push` is
   ever called — a detected secret blocks repo creation entirely, not just the push.
 

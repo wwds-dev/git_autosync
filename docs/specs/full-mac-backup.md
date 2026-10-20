@@ -1,7 +1,8 @@
 # Spec: back up everything on this Mac, not just the checked-out branch
 
 Status: **Define and Architect approved by the owner 2026-10-20** (all five decisions as
-recommended; see the end). Build in progress on `feat/full-mac-backup`.
+recommended; see the end). Built on `feat/full-mac-backup`; review and security findings fixed 2026-10-20
+(see "After review" at the end).
 
 Owner decisions already made:
 - 2026-10-20: side branches go to the hidden backup area (`refs/backup/...`), not to
@@ -125,3 +126,24 @@ up. The summary line counts repos not fully backed up. No new windows.
    commits onto that branch and `push -u` publishes it if it has no upstream, which the
    2026-10-20 decision says side branches should not do. Recommended: sweep only commits on
    the default branch; on any other branch the repo gets the backup refs only.
+
+## After review (2026-10-20)
+
+`docs/audit/full-mac-backup-review.md` and `docs/audit/full-mac-backup-security.md` found one
+P0 and four P1s, all fixed with a regression test each, and every new defence mutation-checked
+(14 of 14 planted faults caught):
+
+- **P0** a gitleaks run whose own git step failed read as clean → any error line of its own
+  fails the scan, and `git rev-list --all` must succeed first.
+- **P1** branch tips moved between plan and scan → every planned SHA no ref reaches is scanned.
+- **P1** an untracked `.gitleaks.toml` disabled the gate → rules come from the committed file.
+- **P1** content gitleaks cannot read → credential files, unscannable formats and other new
+  binaries are left out and reported; the row says **Partial**.
+- P2s fixed: merges scanned (remerge), `stash -a` ignored files dropped, backup repo must be
+  private (gh) and not rewritten by `insteadOf`, author/committer emails allow-listed, worktrees
+  keyed by git's id, `-z` and grown files in the size filter, full ref-name encoding, `wip` refs
+  point at HEAD when clean, no-origin and mid-conflict repos still backed up, sweep on a side
+  branch leaves origin alone, `index.lock` only removed when stale, no `xargs`, `--no-verify`,
+  numeric scan depth.
+- Deferred to TODO: identity check on the origin push, nested-repo coverage, legacy-gitleaks
+  fallback for the snapshot scan.
