@@ -26,6 +26,17 @@ QListWidget {{
 QListWidget::item {{ background: transparent; }}
 QListWidget::item:alternate {{ background: #EFEFF4; }}
 
+/* ── Tooltips ───────────────────────────────────────────────── */
+/* Same trap as menus below: the global rule's near-black text on the
+   system's dark tooltip surface was unreadable (owner, 2026-10-20). */
+QToolTip {{
+    background: #FFFFFF;
+    color: #1D1D1F;
+    border: 1px solid #C7C7CC;
+    border-radius: 6px;
+    padding: 6px 8px;
+}}
+
 /* ── Menus ──────────────────────────────────────────────────── */
 /* The global QWidget rule paints near-black text on every widget. A popup
    menu is drawn on the system surface, which is dark in Dark Mode, so the
