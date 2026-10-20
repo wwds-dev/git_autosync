@@ -61,6 +61,10 @@ def run_engine(root: Path, config_text: str, *extra: str):
         # The gate is not what these tests are about, and a real gitleaks run
         # would make them slow and network/binary dependent.
         "GITLEAKS_CMD": "/usr/bin/true",
+        # Backups and the unlisted-repo scan are tested in test_backup_refs.py.
+        # Off here, or every run would reach GitHub and walk the real lab.
+        "AUTOSYNC_BACKUP_REMOTE": "",
+        "AUTOSYNC_SCAN_ROOTS": "",
     }
     return subprocess.run(["bash", str(ENGINE), *extra],
                           capture_output=True, text=True, env=env)
