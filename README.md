@@ -7,16 +7,28 @@ Leak-gated auto commit & push for your GitHub projects.
 This is its own project repo (`~/Documents/lab/active/git_autosync`). It holds the
 CLI engine (`git_autosync.sh`, tested and canonical) plus a PySide6 desktop GUI
 (`app/`) that wraps the same engine — see `HANDOVER.md` for the full design notes.
+How changes are made (spec, review, verify and release phases, and the owner's
+approval gates) is in `AGENTS.md`; specs, review reports and role playbooks live in
+`docs/specs/`, `docs/audit/` and `docs/playbooks/`.
 Tests live in `tests/`: the engine is driven against throwaway repos in
 `test_push_only.py`, summary parsing is in `test_runner.py`, and
 `test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
 to check header labels fit, rows are banded on screen, Pull buttons survive a list
-rebuild, the tray uses the native menu with nothing wired to the click, and a window
+rebuild, the tray uses the native menu with nothing wired to the click, **Open git_autosync**
+runs its steps in order (Dock tile, show, raise, activate, focus), and a window
 hidden to the menu bar stays hidden. `test_appkit_guard.py` runs the `clickCount`
-guard against the real Objective-C runtime (the crash case in a subprocess) and
-fails if `app/appkit_guard.py` drifts from Lab Hub's original.
+guard against the real Objective-C runtime (the unguarded crash case in a subprocess,
+which must die with SIGABRT naming `clickCount`), parses `app/main.py` to check that
+`main()` really calls `appkit_guard.install()` before building the app (a
+commented-out call fails it), and fails if `app/appkit_guard.py` drifts from Lab
+Hub's original.
 `test_problem_advice.py` pins the per-repo failure advice, the shape of the leak
 triage text, and how `.gitleaksignore` fingerprints are split for display.
+`test_diverged.py` runs **Rebase and sync** and **Link to origin** against throwaway
+repos, `test_leak_triage.py` the leak fixes against real gitleaks and git-filter-repo
+(skipping, not passing, when either is missing), `test_rescan.py` the **Find repos…**
+reconciliation, `test_repo_state.py` last-sync lookups, and `test_repo_url.py` the
+GitHub link after each repo name.
 
 For every repo listed in `autosync_repos.txt`, the tool:
 
@@ -165,8 +177,12 @@ than where it was last seen.
   network problem (transient), remote repo not found (renamed/deleted/wrong URL), or
   rejected by a branch protection rule. Anything else still says "see log".
 - The GUI offers the fix: see **Pull** and **Pull selected** below. Both use
-  `git pull --ff-only`, so they either fast-forward cleanly or refuse; a repo that has
-  diverged is left untouched with the `git pull --rebase` command to run yourself.
+  `git pull --ff-only`, so they either fast-forward cleanly or refuse. A repo that has
+  diverged is left untouched, and the dialog can offer **Rebase and sync** (see **Pull**
+  below) or show the `git pull --rebase` command to run yourself.
+- **An unresolved conflict is never swept.** A repo with unmerged files, or a rebase or
+  merge in progress, is an **ERROR** (`unresolved conflict - resolve it first`), because
+  `git add -A` would mark the files resolved and commit the conflict markers.
 
 ## Logs
 
@@ -290,7 +306,9 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     rows' own boxes, instead of separate All/None buttons off to the side — checked when
     every repo is, unchecked when none is, and shown partial otherwise; clicking it
     checks or clears every row.
-  - The repo name first, followed by its containing folder path in muted text. Column
+  - The repo name first, followed by its containing folder path in muted text. A small
+    **↗** right after the name opens the repo's GitHub page (shown only when its
+    `origin` is on GitHub). Column
     headers keep the checkbox, repository, last-commit, status, and action fields aligned.
     The columns are fixed-width and the table packs to the left, so on a wide window the
     buttons stay next to their repo name instead of drifting to the far edge (the window's
@@ -333,8 +351,15 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     clipped by macOS's fixed-width message-box buttons.
   - **Pull** button (amber) — appears only when a run reported the repo is behind its
     remote. Fetches and fast-forwards (`git pull --ff-only`); never discards local work.
-    If the repo has diverged it says so and changes nothing. Other rows keep their Pull
-    buttons after one repo is pulled.
+    If the repo has diverged, a *Cannot fast-forward* dialog says how many commits each
+    side has and changes nothing; git's output and the manual `git pull --rebase` are
+    under Show Details. When your side has no merge commits and gitleaks is installed it
+    offers **Rebase and sync**: rebase onto GitHub (with `--autostash`), then sync through
+    the engine, leak gate first. It is all or nothing: a conflict or timeout aborts the
+    rebase and leaves the repo as it was. If only uncommitted edits clash, they stay in
+    the stash, the files are named, and nothing is pushed. Cancel is the default button,
+    and the rebased commits use the pinned identity (see *Git identity*). Other rows keep
+    their Pull buttons after one repo is pulled.
   - **Allowlist** button — appears on a row only after a blocked run. Same
     confirmed, undoable allowlist as *Fix leak… → Allowlist (false positive)…*.
 - **Auto-reload** — the list refreshes automatically when you save
@@ -412,6 +437,11 @@ and opens that fix for that repo only:
 | Behind its remote | **Pull** |
 | No GitHub remote | **Create GitHub Repo…** |
 | Not a git repository (moved or deleted) | **Remove from list** |
+| push-only branch with no upstream | **Link to origin** |
+
+**Link to origin** sets the branch's upstream to the same-named branch on GitHub, and
+only if GitHub already has it; it fast-forwards if GitHub is ahead, never pushes, and
+never touches local work.
 
 Push rejected as unauthorised, network failures, a missing remote repository,
 branch protection and a failed scanner are explained with the command to check,
@@ -501,10 +531,18 @@ python -m app.main
 ./build_app.sh
 ```
 
-Installs to `/Applications/git_autosync.app`. The script deletes `build/` and
-`dist/` after installing so Spotlight never indexes a second copy. If something
-is briefly holding a file there, it retries once and then prints
-`Note: could not clear build/ and dist/ — harmless, the app is installed.`
+Installs to `/Applications/git_autosync.app`. PyInstaller builds inside
+`build.noindex/` (`dist/` and `work/` under it; git-ignored): Spotlight never indexes
+a `.noindex` folder, so the intermediate bundles do not show up as extra
+"git_autosync" apps in Spotlight and Launchpad. Deleting them afterwards was not
+enough, because Spotlight indexed them during the build and kept the stale entries.
+
+The installed bundle is updated in place (`rsync -a --delete` into
+`/Applications/git_autosync.app/`) rather than deleted and copied afresh: a new
+bundle at the same path got a new identity, and Spotlight listed the app once per
+build. The script then deletes `build.noindex/`. If something is briefly holding a
+file there, it retries once and then prints
+`Note: could not clear build.noindex/ — harmless, the app is installed.`
 That note is not a failed build; the last lines confirm the install.
 
 The app is ad-hoc signed (`codesign --force --deep -s -`), so the first launch

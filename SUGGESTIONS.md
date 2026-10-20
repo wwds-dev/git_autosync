@@ -40,6 +40,10 @@ Status: `IDEA` · `CONSIDERING` · `PLANNED` · `DONE` · `REJECTED`
 | Leak triage text phrased as two conditional choices naming their buttons; rotation before history rewrite; dialog buttons no longer clipped | Oct 2026 |
 | Manage allowlist shows File / Line / Rule / Commit instead of truncated fingerprints | Oct 2026 |
 | Second click on the tray icon dismisses the menu; build script no longer prints a false-alarm cleanup error | Oct 2026 |
+| Rebase and sync for a diverged repo (all or nothing, then leak-gated sync); engine refuses to sweep an unresolved conflict | Oct 2026 |
+| ↗ link to each repo's GitHub page; **Link to origin** for a push-only branch with no upstream | Oct 2026 |
+| Tray dot only opens the native menu and never fronts the window (`clickCount` guard for macOS 27) | Oct 2026 |
+| Build in `build.noindex/` and update the installed bundle in place, so Spotlight lists the app once | Oct 2026 |
 
 ## Rejected
 
