@@ -114,44 +114,103 @@ gl_run(){
   return $rc
 }
 
-# The scanner's rules come from the repo's *committed* .gitleaks.toml, never
-# from the working tree: an untracked .gitleaks.toml with a `paths` allowlist
-# switched the whole gate off (security review P1-3). .gitleaksignore still
-# comes from the working tree, on purpose: it holds exact fingerprints, not
-# patterns, and the Allowlist button must take effect before it is committed.
+# What the scanner trusts comes from the *published* version of the repo —
+# its default branch on origin, as last fetched — never from this checkout.
+# An untracked .gitleaks.toml with a `paths` allowlist switched the gate off,
+# so did one committed in a local commit, and so did a commit-less
+# `file:rule:line` line in an untracked .gitleaksignore (security review P1-3,
+# both rounds). gitleaks always reads <source>/.gitleaksignore whatever -i
+# says, so it is pointed at the repo's .git directory, which has no working
+# tree files, and given an allowlist built here:
+#   - the published .gitleaksignore, and
+#   - git_autosync's own allowlist for the repo ($IGNORE_DIR/<entry>), which
+#     is what the GUI's Allowlist button writes, so a false positive can be
+#     cleared before anything is committed.
+# A repo with no origin gets gitleaks' default rules and git_autosync's
+# allowlist only.
+IGNORE_DIR="${AUTOSYNC_IGNORE_DIR:-$STATE_DIR/gitleaksignore}"
 GL_CFG="$BK_TMP/gitleaks.toml"
+GL_IGN="$BK_TMP/ignore"
+GL_SRC=""
+GL_NOTED=""
+SCAN_LABEL=""
+pub_ref(){
+  local d
+  d="$(git -C "$1" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)"
+  if [ -n "$d" ]; then printf '%s' "$d"; return; fi
+  for d in refs/remotes/origin/main refs/remotes/origin/master; do
+    git -C "$1" show-ref -q --verify "$d" && { printf '%s' "$d"; return; }
+  done
+}
 gl_config(){
-  local dir="$1"
-  git -C "$dir" show HEAD:.gitleaks.toml > "$GL_CFG" 2>/dev/null \
+  local dir="$1" pub f own
+  pub="$(pub_ref "$dir")"
+  GL_SRC="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  for f in .gitleaksignore .gitleaks.toml; do
+    if [ -e "$GL_SRC/$f" ]; then
+      log "  $GL_SRC/$f exists - gitleaks would read it; refusing to scan"
+      return 1
+    fi
+  done
+  { [ -n "$pub" ] && git -C "$dir" show "$pub:.gitleaks.toml" > "$GL_CFG" 2>/dev/null; } \
     || printf '[extend]\nuseDefault = true\n' > "$GL_CFG"
+  rm -rf "$GL_IGN"; mkdir -p "$GL_IGN"
+  { [ -n "$pub" ] && git -C "$dir" show "$pub:.gitleaksignore" 2>/dev/null; echo
+    own="$IGNORE_DIR/$(ref_key "$SCAN_LABEL")"
+    [ -f "$own" ] && cat "$own"; } > "$GL_IGN/.gitleaksignore"
+  if [ "$GL_NOTED" != "$SCAN_LABEL" ]; then
+    GL_NOTED="$SCAN_LABEL"
+    for f in .gitleaks.toml .gitleaksignore; do
+      [ -e "$dir/$f" ] || continue
+      if ! git -C "$dir" show "${pub:-HEAD}:$f" 2>/dev/null | cmp -s - "$dir/$f"; then
+        log "  note: this checkout's $f differs from the published one${pub:+ ($pub)} and is not used by the gate"
+      fi
+    done
+  fi
 }
 
 # Merges are scanned as remerge diffs: a secret typed only while resolving a
 # conflict is in no other commit (security review P2-1).
 GL_LOG_OPTS="--full-history --diff-merges=remerge"
 
+# The refs the history scan covers are captured once, and the scan of what
+# the backup pushes excludes exactly those: with `--all` evaluated twice, a
+# commit unreachable for the first scan and reachable again for the second
+# was in neither (security review, second round).
+capture_refs(){
+  { git for-each-ref --format='%(objectname)'
+    git worktree list --porcelain 2>/dev/null | awk '/^HEAD /{print $2}'
+  } | LC_ALL=C sort -u | paste -sd ' ' - > "$BK_TMP/scanned_refs"
+}
+
 scan_staged(){
   local dir="$1" rc
-  gl_config "$dir"
-  gl_run git --staged --no-banner --redact --verbose --config "$GL_CFG" "$dir"; rc=$?
+  gl_config "$dir" || return 2
+  # Source is the .git directory (see gl_config); the staged diff still needs
+  # the work tree, which GIT_WORK_TREE supplies.
+  GIT_WORK_TREE="$dir" gl_run git --staged --no-banner --redact --verbose \
+    --config "$GL_CFG" -i "$GL_IGN" "$GL_SRC"; rc=$?
   if [ $rc -ge 2 ]; then   # older gitleaks without the `git` subcommand
-    gl_run protect --staged --no-banner --redact --verbose --config "$GL_CFG" --source "$dir"; rc=$?
+    GIT_WORK_TREE="$dir" gl_run protect --staged --no-banner --redact --verbose \
+      --config "$GL_CFG" -i "$GL_IGN" --source "$GL_SRC"; rc=$?
   fi
   return $rc
 }
 scan_history(){
-  local dir="$1" rc
+  local dir="$1" rc refs
   # A ref git cannot read is a ref gitleaks silently did not scan.
   if ! git -C "$dir" rev-list --all --quiet >/dev/null 2>&1; then
     log "  git cannot read every ref and object here (git rev-list --all failed)"
     return 2
   fi
-  gl_config "$dir"
-  gl_run git --no-banner --redact --verbose --config "$GL_CFG" \
-    --log-opts="--all $GL_LOG_OPTS" "$dir"; rc=$?
+  refs="$(cat "$BK_TMP/scanned_refs")"
+  [ -n "$refs" ] || return 0   # no refs at all: no history
+  gl_config "$dir" || return 2
+  gl_run git --no-banner --redact --verbose --config "$GL_CFG" -i "$GL_IGN" \
+    --log-opts="$refs $GL_LOG_OPTS" "$GL_SRC"; rc=$?
   if [ $rc -ge 2 ]; then
-    gl_run detect --no-banner --redact --verbose --config "$GL_CFG" \
-      --log-opts="--all $GL_LOG_OPTS" --source "$dir"; rc=$?
+    gl_run detect --no-banner --redact --verbose --config "$GL_CFG" -i "$GL_IGN" \
+      --log-opts="$refs $GL_LOG_OPTS" --source "$GL_SRC"; rc=$?
   fi
   return $rc
 }
@@ -221,13 +280,23 @@ bk_commit(){   # bk_commit <tree> <parent or ""> <message>
 bk_sensitive(){
   case "/$1" in */.ssh/*|*/.gnupg/*|*/.aws/*|*/.kube/*) return 0 ;; esac
   case "${1##*/}" in
-    .env|.env.*|*.env|.envrc|.netrc|.npmrc|.pypirc|.pgpass|.git-credentials|credentials|credentials.*) return 0 ;;
+    .env|.env.*|.env[-_]*|*.env|*.env.*|.envrc|.netrc|.npmrc|.pypirc|.pgpass|.git-credentials) return 0 ;;
+    credentials|credentials.*) return 0 ;;
+    env.py|env.js|env.ts|env.sh|env.d.ts) ;;   # code, scanned normally
+    env.*) return 0 ;;
     *.pem|*.key|*.p12|*.pfx|*.der|*.crt|*.cer|*.jks|*.keystore|*.kdbx|*.keychain|*.keychain-db) return 0 ;;
     *.mobileprovision|*.ovpn|*.ppk|*.tfstate|*.tfstate.*|id_rsa*|id_ed25519*|id_ecdsa*|id_dsa*) return 0 ;;
   esac
   return 1
 }
 bk_unscannable(){
+  # Text files gitleaks' default config skips by path: lock files and
+  # dependency trees. Anything there would be pushed unscanned.
+  case "/$1" in */node_modules/*|*/vendor/*|*/site-packages/*|*/.venv/*) return 0 ;; esac
+  case "${1##*/}" in
+    package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|deno.lock|go.sum|*.lock) return 0 ;;
+    *.svg) return 0 ;;   # text, but on gitleaks' image allowlist
+  esac
   case "${1##*/}" in
     *.sqlite|*.sqlite3|*.sqlite-*|*.db|*.db-*|*.pdf|*.doc|*.docx|*.xls|*.xlsx|*.ppt|*.pptx) return 0 ;;
     *.odt|*.ods|*.zip|*.gz|*.tgz|*.bz2|*.xz|*.7z|*.rar|*.tar|*.dmg|*.pkg|*.jar|*.pkl|*.pickle) return 0 ;;
@@ -266,9 +335,16 @@ bk_filter(){
         why="over the size limit"
       elif [ "$st" = "A" ] && git -C "$dir" check-ignore -q --no-index -- "$path" 2>/dev/null; then
         why="ignored"   # a `stash -a` entry carries ignored files
-      elif [ "$size" -gt 0 ] && ! bk_plain_media "$lower" \
-           && [ "$(GIT_INDEX_FILE="$idx" git -C "$dir" diff --cached --numstat "$base" -- "$path" | cut -f1)" = "-" ]; then
-        why="binary the scanner cannot read"
+      elif [ "$size" -gt 0 ]; then
+        # Media names are only trusted when the content really is binary:
+        # gitleaks skips *.png by name, so a text "logo.png" would go unscanned.
+        local bin=0
+        [ "$(GIT_INDEX_FILE="$idx" git -C "$dir" diff --cached --numstat "$base" -- "$path" | cut -f1)" = "-" ] && bin=1
+        if [ "$bin" -eq 1 ] && ! bk_plain_media "$lower"; then
+          why="binary the scanner cannot read"
+        elif [ "$bin" -eq 0 ] && bk_plain_media "$lower"; then
+          why="text under a media name the scanner skips"
+        fi
       fi
     fi
     [ -n "$why" ] || continue
@@ -382,24 +458,25 @@ backup_plan(){
 }
 
 # Scan exactly what the backup will push and the history scan did not see:
-# every planned SHA (branch tips, snapshots, stashes) minus what is reachable
-# from a ref now. Snapshots are reachable from no ref; a branch tip recorded
+# every planned SHA (branch tips, snapshots, stashes) minus what the history
+# scan's refs reach. Snapshots are reachable from no ref; a branch tip recorded
 # by the plan and moved since (amend, reset, rebase mid-run) is no longer
 # reachable either, and would otherwise be pushed unscanned (review P1-1).
 scan_unreached(){
-  local dir="$1" shas rc
+  local dir="$1" shas rc refs
   # Single spaces only: gitleaks splits --log-opts on every space, and a
   # doubled one becomes an empty argument git rejects.
   shas="$(awk '{print $1}' "$BK_TMP/desired" | LC_ALL=C sort -u | paste -sd ' ' -)"
   [ -n "$shas" ] || return 0
+  refs="$(cat "$BK_TMP/scanned_refs")"
   # shellcheck disable=SC2086
-  if ! git rev-list --quiet $shas --not --all >/dev/null 2>&1; then
+  if ! git rev-list --quiet $shas ${refs:+--not $refs} >/dev/null 2>&1; then
     log "  git cannot read the commits planned for the backup"
     return 2
   fi
-  gl_config "$dir"
-  gl_run git --no-banner --redact --verbose --config "$GL_CFG" \
-    --log-opts="$shas --not --all $GL_LOG_OPTS" "$dir"; rc=$?
+  gl_config "$dir" || return 2
+  gl_run git --no-banner --redact --verbose --config "$GL_CFG" -i "$GL_IGN" \
+    --log-opts="$shas${refs:+ --not $refs} $GL_LOG_OPTS" "$GL_SRC"; rc=$?
   return $rc
 }
 
@@ -442,9 +519,12 @@ bk_foreign_identities(){
   local shas
   shas="$(awk '{print $1}' "$BK_TMP/push" | paste -sd ' ' -)"
   [ -n "$shas" ] || return 0
+  # A git error must not read as "nobody foreign": print a marker instead.
   # shellcheck disable=SC2086
-  git log --format='%H %ae %ce' $shas --not --remotes 2>/dev/null \
-    | awk -v ok=" $BACKUP_EMAILS " 'index(ok, " " $2 " ") == 0 || index(ok, " " $3 " ") == 0 { print $1 }'
+  git log --format='%H %ae %ce' $shas --not --remotes > "$BK_TMP/identities" 2>/dev/null \
+    || { echo "(git log failed - cannot check identities)"; return 0; }
+  awk -v ok=" $BACKUP_EMAILS " 'index(ok, " " $2 " ") == 0 || index(ok, " " $3 " ") == 0 { print $1 }' \
+    "$BK_TMP/identities"
 }
 
 # backup_push <label> — compare the plan with the backup repo and push what
@@ -635,6 +715,9 @@ process_repo(){
     backup_plan "$label"
   fi
 
+  SCAN_LABEL="$label"
+  capture_refs
+
   # ---- THE GATE ----
   # History is scanned in both modes: it covers everything about to be
   # published. The staged scan is skipped in push-only because nothing was
@@ -674,7 +757,7 @@ process_repo(){
     log "  BLOCKED: a secret is in work the backup would push (uncommitted work, a stash,"
     log "           or a branch tip that moved during this run). Nothing pushed."
     unstage
-    SUMMARY+=("BLOCKED $label  (secret in uncommitted work - see log)"); N_BLOCKED=$((N_BLOCKED+1)); return
+    SUMMARY+=("BLOCKED $label  (secret in work not yet on GitHub - see log)"); N_BLOCKED=$((N_BLOCKED+1)); return
   elif [ $rc -ge 2 ]; then
     log "  ERROR: gitleaks failed on the work the backup would push. Skipping for safety."
     unstage
@@ -712,7 +795,11 @@ process_repo(){
     SUMMARY+=("ERROR   $label  (unresolved conflict - resolve it first)"); N_ERR=$((N_ERR+1)); return
   fi
   if [ "$backup_only" -eq 1 ]; then
-    SUMMARY+=("OK      $label  (sweep: on side branch '${cur:-detached HEAD}' - nothing committed, backed up only)")
+    if [ "$BK_STATE" = "failed" ]; then
+      SUMMARY+=("OK      $label  (sweep: on side branch '${cur:-detached HEAD}' - nothing committed; backup failed)")
+    else
+      SUMMARY+=("OK      $label  (sweep: on side branch '${cur:-detached HEAD}' - nothing committed, backed up only)")
+    fi
     N_NOOP=$((N_NOOP+1)); return
   fi
 

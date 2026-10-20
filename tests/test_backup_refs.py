@@ -287,7 +287,7 @@ class TestTheGateCoversSnapshots:
 
         result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
 
-        assert "BLOCKED proj  (secret in uncommitted work" in result.stdout, result.stdout[-1500:]
+        assert "BLOCKED proj  (secret in work not yet on GitHub" in result.stdout, result.stdout[-1500:]
         assert backup_refs(backup) == {}
         assert result.returncode != 0
 
@@ -618,3 +618,79 @@ class TestOtherHardening:
                      scan_roots=f"{root / 'active'}=a[$(touch {marker})]")
         assert not marker.exists()
         assert "depth is not a number" in result.stdout
+
+
+@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
+class TestTheScannerTrustsOnlyWhatIsPublished:
+    """Security review, second round: P1-3 had two more routes."""
+
+    def test_a_scanner_config_loosened_in_a_local_commit_is_not_used(self, ws):
+        root, repo, backup = ws
+        _commit(repo, ".gitleaks.toml", "[allowlist]\npaths = ['''.*''']\n", "tune scanner")
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED proj" in result.stdout, result.stdout[-1500:]
+        assert backup_refs(backup) == {}
+        assert "differs from the published one" in result.stdout
+
+    def test_a_commitless_fingerprint_in_the_checkout_does_not_allowlist(self, ws):
+        root, repo, backup = ws
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        (repo / ".gitleaksignore").write_text("creds.txt:github-pat:1\n")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED proj" in result.stdout, result.stdout[-1500:]
+        assert backup_refs(backup) == {}
+
+    def test_the_history_scan_ignores_the_checkouts_allowlist_too(self, ws):
+        """A committed secret on a branch is the history scan's to catch;
+        the scan of unreached commits never sees it."""
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "side")
+        _commit(repo, "creds.txt", f'token = "{_token()}"\n', "secret on a branch")
+        (repo / ".gitleaksignore").write_text("creds.txt:github-pat:1\n")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED proj  (secret in history" in result.stdout, result.stdout[-1500:]
+        assert backup_refs(backup) == {}
+
+    def test_git_autosyncs_own_allowlist_clears_a_false_positive(self, ws):
+        from app.paths import ref_key
+        root, repo, backup = ws
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        own = root / "state" / "gitleaksignore"
+        own.mkdir(parents=True)
+        (own / ref_key("proj")).write_text("creds.txt:github-pat:1\n")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED" not in result.stdout, result.stdout[-1500:]
+        assert f"{PREFIX}/wip/main" in backup_refs(backup)
+
+    def test_the_published_gitleaksignore_still_counts(self, ws):
+        root, repo, backup = ws
+        _commit(repo, "creds.txt", f'token = "{_token()}"\n', "fixture with a dummy token")
+        tip = git(repo, "rev-parse", "HEAD")
+        _commit(repo, ".gitleaksignore", f"{tip}:creds.txt:github-pat:1\n", "allowlist the dummy")
+        git(repo, "push", "-q", "origin", "main")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED" not in result.stdout, result.stdout[-1500:]
+
+    def test_scanner_files_inside_dot_git_stop_the_scan(self, ws):
+        root, repo, backup = ws
+        (repo / ".git" / ".gitleaksignore").write_text("x\n")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "ERROR   proj  (scanner error)" in result.stdout
+        assert backup_refs(backup) == {}
+
+
+class TestMoreThatIsLeftOut:
+    def test_text_under_a_media_name_lock_files_and_env_variants(self, ws):
+        root, repo, backup = ws
+        (repo / "fake.png").write_text("token = x\n")
+        (repo / "logo.svg").write_text("<svg/>\n")
+        (repo / "package-lock.json").write_text("{}\n")
+        (repo / ".env-local").write_text("P=x\n")
+        (repo / "env.production").write_text("P=x\n")
+        (repo / "env.py").write_text("x = 1\n")   # code, not a dotenv file
+        run(root, "proj  push-only\n")
+        files = set(git(backup, "ls-tree", "-r", "--name-only",
+                        backup_refs(backup)[f"{PREFIX}/wip/main"]).splitlines())
+        assert "env.py" in files
+        assert not files & {"fake.png", "logo.svg", "package-lock.json", ".env-local", "env.production"}
