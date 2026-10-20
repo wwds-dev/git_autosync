@@ -128,23 +128,44 @@ gl_run(){
 #     cleared before anything is committed.
 # A repo with no origin gets gitleaks' default rules and git_autosync's
 # allowlist only.
-IGNORE_DIR="${AUTOSYNC_IGNORE_DIR:-$STATE_DIR/gitleaksignore}"
+#
+# "Published" is what `git ls-remote origin` says now, not a local
+# remote-tracking ref: `git update-ref refs/remotes/origin/main <local>` or a
+# repointed origin/HEAD made a local commit look published (security review,
+# third round). And autosync itself never pushes a change to these two files
+# to origin (see scanner_files_changed): publishing them is the owner's
+# review, by pushing by hand.
+#
+# The allowlist lives in App Support whatever STATE_DIR is, so a manual run
+# from the checkout cannot read one planted in the repo, and only full,
+# commit-pinned fingerprints count from it: a `file:rule:line` line matches
+# that line in every commit.
+IGNORE_DIR="${AUTOSYNC_IGNORE_DIR:-$HOME/Library/Application Support/git_autosync/gitleaksignore}"
 GL_CFG="$BK_TMP/gitleaks.toml"
 GL_IGN="$BK_TMP/ignore"
 GL_SRC=""
 GL_NOTED=""
 SCAN_LABEL=""
-pub_ref(){
-  local d
-  d="$(git -C "$1" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)"
-  if [ -n "$d" ]; then printf '%s' "$d"; return; fi
-  for d in refs/remotes/origin/main refs/remotes/origin/master; do
-    git -C "$1" show-ref -q --verify "$d" && { printf '%s' "$d"; return; }
-  done
+GL_PUB=""
+gl_repo_init(){
+  local dir="$1" out sha
+  GL_PUB=""; GL_NOTED=""
+  git -C "$dir" remote get-url origin >/dev/null 2>&1 || return 0
+  if ! out="$(git -C "$dir" ls-remote --symref origin HEAD 2>/dev/null)"; then
+    log "  cannot reach origin to read its scanner config - using default rules"
+    return 0
+  fi
+  sha="$(printf '%s\n' "$out" | awk '$1 !~ /^ref:/ && $2 == "HEAD" { print $1; exit }')"
+  [ -n "$sha" ] || return 0   # empty remote
+  git -C "$dir" cat-file -e "$sha^{commit}" 2>/dev/null || git -C "$dir" fetch -q origin 2>/dev/null
+  if ! git -C "$dir" cat-file -e "$sha^{commit}" 2>/dev/null; then
+    log "  origin's default branch is not available here - using default rules"
+    return 0
+  fi
+  GL_PUB="$sha"
 }
 gl_config(){
-  local dir="$1" pub f own
-  pub="$(pub_ref "$dir")"
+  local dir="$1" pub="$GL_PUB" f own
   GL_SRC="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
   for f in .gitleaksignore .gitleaks.toml; do
     if [ -e "$GL_SRC/$f" ]; then
@@ -157,13 +178,13 @@ gl_config(){
   rm -rf "$GL_IGN"; mkdir -p "$GL_IGN"
   { [ -n "$pub" ] && git -C "$dir" show "$pub:.gitleaksignore" 2>/dev/null; echo
     own="$IGNORE_DIR/$(ref_key "$SCAN_LABEL")"
-    [ -f "$own" ] && cat "$own"; } > "$GL_IGN/.gitleaksignore"
+    [ -f "$own" ] && grep -E '^[0-9a-f]{40}:' "$own"; } > "$GL_IGN/.gitleaksignore"
   if [ "$GL_NOTED" != "$SCAN_LABEL" ]; then
     GL_NOTED="$SCAN_LABEL"
     for f in .gitleaks.toml .gitleaksignore; do
       [ -e "$dir/$f" ] || continue
       if ! git -C "$dir" show "${pub:-HEAD}:$f" 2>/dev/null | cmp -s - "$dir/$f"; then
-        log "  note: this checkout's $f differs from the published one${pub:+ ($pub)} and is not used by the gate"
+        log "  note: this checkout's $f differs from the published one${pub:+ (origin ${pub:0:12})} and is not used by the gate"
       fi
     done
   fi
@@ -177,25 +198,43 @@ GL_LOG_OPTS="--full-history --diff-merges=remerge"
 # the backup pushes excludes exactly those: with `--all` evaluated twice, a
 # commit unreachable for the first scan and reachable again for the second
 # was in neither (security review, second round).
+HEAD_SCANNED=""
 capture_refs(){
+  HEAD_SCANNED="$(git rev-parse -q --verify HEAD 2>/dev/null)"
   { git for-each-ref --format='%(objectname)'
     git worktree list --porcelain 2>/dev/null | awk '/^HEAD /{print $2}'
   } | LC_ALL=C sort -u | paste -sd ' ' - > "$BK_TMP/scanned_refs"
 }
 
+# The staged changes are scanned as a commit built from the index, from the
+# .git source like every other scan. gitleaks' own `--staged` mode, pointed at
+# .git, scanned nothing at all and said "no leaks found" (security review,
+# third round: a sweep published a token to origin). The commit is
+# deterministic, so a fingerprint allowlisted for it stays valid until the
+# staged content changes. STAGED_TREE is what the sweep may then commit.
+STAGED_TREE=""
 scan_staged(){
-  local dir="$1" rc
+  local dir="$1" rc head c refs
   gl_config "$dir" || return 2
-  # Source is the .git directory (see gl_config); the staged diff still needs
-  # the work tree, which GIT_WORK_TREE supplies.
-  GIT_WORK_TREE="$dir" gl_run git --staged --no-banner --redact --verbose \
-    --config "$GL_CFG" -i "$GL_IGN" "$GL_SRC"; rc=$?
-  if [ $rc -ge 2 ]; then   # older gitleaks without the `git` subcommand
-    GIT_WORK_TREE="$dir" gl_run protect --staged --no-banner --redact --verbose \
-      --config "$GL_CFG" -i "$GL_IGN" --source "$GL_SRC"; rc=$?
-  fi
+  STAGED_TREE="$(git write-tree 2>/dev/null)" || { log "  cannot read the index"; return 2; }
+  head="$(git rev-parse -q --verify HEAD 2>/dev/null)"
+  [ -n "$head" ] && [ "$STAGED_TREE" = "$(git rev-parse "$head^{tree}")" ] && return 0
+  c="$(bk_commit "$STAGED_TREE" "$head" "autosync: staged changes, as scanned")" || return 2
+  refs="$(cat "$BK_TMP/scanned_refs")"
+  gl_run git --no-banner --redact --verbose --config "$GL_CFG" -i "$GL_IGN" \
+    --log-opts="$c${refs:+ --not $refs} $GL_LOG_OPTS" "$GL_SRC"; rc=$?
   return $rc
 }
+
+# Unpushed commits, or staged changes, that touch the scanner's own files.
+# autosync does not publish those: once on origin they are trusted, so a
+# loosened config would switch the gate off from the next run on.
+scanner_files_changed(){
+  [ -n "$(git log --format=%H "$1" --not --remotes -- .gitleaks.toml .gitleaksignore 2>/dev/null | head -1)" ] \
+    && return 0
+  [ "$mode" = "sweep" ] && [ -n "$(git diff --cached --name-only HEAD -- .gitleaks.toml .gitleaksignore 2>/dev/null)" ]
+}
+
 scan_history(){
   local dir="$1" rc refs
   # A ref git cannot read is a ref gitleaks silently did not scan.
@@ -319,7 +358,7 @@ bk_plain_media(){
 # $BK_TMP/left_out. A changed tracked file goes back to its <base> version;
 # a new one is dropped. Logs to stderr: callers run inside $(...).
 bk_filter(){
-  local dir="$1" idx="$2" base="$3" st path lower why sha size
+  local dir="$1" idx="$2" base="$3" who="${4:-backup}" st path lower why sha size
   while IFS= read -r -d '' st && IFS= read -r -d '' path; do
     case "$st" in A|M|T) ;; *) continue ;; esac
     lower="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
@@ -353,7 +392,7 @@ bk_filter(){
     else
       GIT_INDEX_FILE="$idx" git -C "$dir" reset -q "$base" -- "$path" >/dev/null 2>&1
     fi
-    log "  backup: left out $path ($why)" >&2
+    log "  $who: left out $path ($why)" >&2
     printf '%s\n' "$why" >> "$BK_TMP/left_out"
   done < <(GIT_INDEX_FILE="$idx" git -C "$dir" diff --cached --name-status -z --no-renames "$base" 2>/dev/null)
 }
@@ -709,6 +748,10 @@ process_repo(){
     log "  mode: push-only (working tree left alone)"
   else
     git add -A
+    # A sweep publishes what it commits, so it leaves out what the backup
+    # does: credential files and formats the scanner cannot read.
+    local base; base="$(git rev-parse -q --verify HEAD 2>/dev/null || git hash-object -t tree /dev/null)"
+    bk_filter "$dir" "$(git rev-parse --path-format=absolute --git-path index)" "$base" sweep
   fi
 
   if [ -n "$BACKUP_REMOTE" ]; then
@@ -716,6 +759,7 @@ process_repo(){
   fi
 
   SCAN_LABEL="$label"
+  gl_repo_init "$dir"
   capture_refs
 
   # ---- THE GATE ----
@@ -801,6 +845,13 @@ process_repo(){
       SUMMARY+=("OK      $label  (sweep: on side branch '${cur:-detached HEAD}' - nothing committed, backed up only)")
     fi
     N_NOOP=$((N_NOOP+1)); return
+  fi
+
+  if [ "$needs_create" -eq 0 ] && [ -n "$HEAD_SCANNED" ] && scanner_files_changed "$HEAD_SCANNED"; then
+    log "  ERROR: .gitleaks.toml or .gitleaksignore changed in work not yet on origin."
+    log "         autosync does not publish the scanner's own rules; review the change and push it yourself."
+    unstage
+    SUMMARY+=("ERROR   $label  (scanner config changed - review and push it yourself)"); N_ERR=$((N_ERR+1)); return
   fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -895,6 +946,13 @@ process_repo(){
     git -c user.name="${AUTOSYNC_GIT_NAME:-wwds-dev}" \
         -c user.email="${AUTOSYNC_GIT_EMAIL:-243015673+wwds-dev@users.noreply.github.com}" \
         commit -q -m "${AUTOSYNC_COMMIT_MSG:-autosync: $(ts)}" && log "  committed changes."
+    # Only what the gate scanned may be published: if anything changed the
+    # index after the scan, this commit is not that.
+    if [ "$(git rev-parse -q --verify 'HEAD^{tree}')" != "$STAGED_TREE" ]; then
+      log "  ERROR: the index changed after the scan - the commit is kept here, not pushed"
+      SUMMARY+=("ERROR   $label  (changes appeared during the run - not pushed)"); N_ERR=$((N_ERR+1)); return
+    fi
+    HEAD_SCANNED="$(git rev-parse HEAD)"
   fi
 
   # ---- create the GitHub repo (first push) or push as usual ----
@@ -911,7 +969,11 @@ process_repo(){
 
   # ---- push (covers new commit AND any earlier unpushed commits) ----
   if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-    push_out="$(git push 2>&1)"; push_rc=$?
+    # The scanned commit, by SHA, to the upstream branch: never a HEAD that
+    # may have moved since the gate (security review, third round).
+    local up_remote up_ref
+    up_remote="$(git config "branch.$branch.remote")"; up_ref="$(git config "branch.$branch.merge")"
+    push_out="$(git push "$up_remote" "$HEAD_SCANNED:$up_ref" 2>&1)"; push_rc=$?
     printf '%s\n' "$push_out" >>"$LOG"
     if [ $push_rc -eq 0 ]; then
       if [ "${behind:-0}" -gt 0 ]; then
@@ -943,7 +1005,9 @@ process_repo(){
       SUMMARY+=("ERROR   $label  ($reason)"); N_ERR=$((N_ERR+1))
     fi
   else
-    if git push -u origin "$branch" >>"$LOG" 2>&1; then log "  pushed & set upstream origin/$branch."; SUMMARY+=("SYNCED  $label"); N_SYNCED=$((N_SYNCED+1))
+    if git push origin "$HEAD_SCANNED:refs/heads/$branch" >>"$LOG" 2>&1 \
+       && git branch -q --set-upstream-to="origin/$branch" "$branch" >>"$LOG" 2>&1; then
+      log "  pushed & set upstream origin/$branch."; SUMMARY+=("SYNCED  $label"); N_SYNCED=$((N_SYNCED+1))
     else log "  ERROR: push failed (see log)."; SUMMARY+=("ERROR   $label  (push failed)"); N_ERR=$((N_ERR+1)); fi
   fi
 }

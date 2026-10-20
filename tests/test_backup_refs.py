@@ -40,6 +40,9 @@ def ws(tmp_path):
     backup = tmp_path / "backup.git"
     for bare in (origin, backup):
         subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True)
+    # As on GitHub: origin's HEAD names its default branch, which is where the
+    # engine reads the published scanner config from.
+    subprocess.run(["git", "-C", str(origin), "symbolic-ref", "HEAD", "refs/heads/main"], check=True)
     repo = _init(tmp_path / "active" / "proj")
     (repo / ".gitignore").write_text(".env\n")
     (repo / "README.md").write_text("start\n")
@@ -67,6 +70,7 @@ def run(root: Path, config_text: str, *extra: str, gitleaks: str = "/usr/bin/tru
         # engine refuses a local path unless told this is a test.
         "AUTOSYNC_BACKUP_ALLOW_LOCAL": "1",
         "AUTOSYNC_ALLOWED_EMAILS": "t@example.com 243015673+wwds-dev@users.noreply.github.com",
+        "AUTOSYNC_IGNORE_DIR": str(root / "state" / "gitleaksignore"),
         **env_extra,
     }
     result = subprocess.run(["bash", str(ENGINE), *extra], capture_output=True,
@@ -656,12 +660,28 @@ class TestTheScannerTrustsOnlyWhatIsPublished:
         from app.paths import ref_key
         root, repo, backup = ws
         (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        first = run(root, "proj  push-only\n", "--dry-run", gitleaks=GITLEAKS)
+        fp = next(line.split("Fingerprint:", 1)[1].strip()
+                  for line in first.stdout.splitlines() if "Fingerprint:" in line)
+        own = root / "state" / "gitleaksignore"
+        own.mkdir(parents=True)
+        # What the GUI's Allowlist button writes: the full fingerprint, plus a
+        # commit-less line that must not count on its own.
+        (own / ref_key("proj")).write_text(f"{fp}\ncreds.txt:github-pat:1\n")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED" not in result.stdout, result.stdout[-1500:]
+        assert f"{PREFIX}/wip/main" in backup_refs(backup)
+
+    def test_a_commitless_line_in_the_own_allowlist_does_not_count(self, ws):
+        from app.paths import ref_key
+        root, repo, backup = ws
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
         own = root / "state" / "gitleaksignore"
         own.mkdir(parents=True)
         (own / ref_key("proj")).write_text("creds.txt:github-pat:1\n")
         result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
-        assert "BLOCKED" not in result.stdout, result.stdout[-1500:]
-        assert f"{PREFIX}/wip/main" in backup_refs(backup)
+        assert "BLOCKED proj" in result.stdout
+        assert backup_refs(backup) == {}
 
     def test_the_published_gitleaksignore_still_counts(self, ws):
         root, repo, backup = ws
@@ -694,3 +714,94 @@ class TestMoreThatIsLeftOut:
                         backup_refs(backup)[f"{PREFIX}/wip/main"]).splitlines())
         assert "env.py" in files
         assert not files & {"fake.png", "logo.svg", "package-lock.json", ".env-local", "env.production"}
+
+
+@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
+class TestThirdRound:
+    """Security review, final check before release (2026-10-20)."""
+
+    def test_a_sweep_with_a_staged_token_is_blocked_with_backups_on(self, ws):
+        root, repo, backup = ws
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        result = run(root, "proj\n", gitleaks=GITLEAKS)
+        assert "BLOCKED proj  (secret in changes" in result.stdout, result.stdout[-1500:]
+        assert "creds.txt" not in git(repo, "ls-tree", "-r", "--name-only", "origin/main")
+
+    def test_a_sweep_with_a_staged_token_is_blocked_with_backups_off(self, ws):
+        root, repo, backup = ws
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        result = run(root, "proj\n", gitleaks=GITLEAKS, AUTOSYNC_BACKUP_REMOTE="")
+        assert "BLOCKED proj  (secret in changes" in result.stdout, result.stdout[-1500:]
+
+    def test_a_sweep_does_not_commit_credential_files(self, ws):
+        root, repo, backup = ws
+        (repo / ".env.local").write_text("GITHUB_TOKEN=correcthorse\n")
+        (repo / "report.pdf").write_text("%PDF token\n")
+        (repo / "ok.py").write_text("x = 1\n")
+        run(root, "proj\n", gitleaks=GITLEAKS)
+        pushed = git(repo, "ls-tree", "-r", "--name-only", "origin/main")
+        assert "ok.py" in pushed
+        assert ".env.local" not in pushed and "report.pdf" not in pushed
+        assert (repo / ".env.local").exists(), "the file itself stays on the Mac"
+
+    def test_autosync_does_not_publish_a_scanner_config_change(self, ws):
+        root, repo, backup = ws
+        _commit(repo, ".gitleaks.toml", "[allowlist]\npaths = ['''.*''']\n",
+                "scanner: allowlist test fixtures")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "scanner config changed" in result.stdout, result.stdout[-1500:]
+        assert ".gitleaks.toml" not in git(repo, "ls-tree", "-r", "--name-only", "origin/main")
+
+    def test_a_sweep_does_not_publish_an_untracked_scanner_config(self, ws):
+        root, repo, backup = ws
+        (repo / ".gitleaks.toml").write_text("[allowlist]\npaths = ['''.*''']\n")
+        run(root, "proj\n", gitleaks=GITLEAKS)
+        assert ".gitleaks.toml" not in git(repo, "ls-tree", "-r", "--name-only", "origin/main")
+
+    def test_a_locally_rewritten_origin_ref_is_not_trusted(self, ws):
+        root, repo, backup = ws
+        git(repo, "checkout", "-qb", "cfg")
+        cfg = _commit(repo, ".gitleaks.toml", "[allowlist]\npaths = ['''.*''']\n", "cfg")
+        git(repo, "checkout", "-q", "main")
+        git(repo, "update-ref", "refs/remotes/origin/main", cfg)
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
+        assert "BLOCKED proj" in result.stdout, result.stdout[-1500:]
+        assert backup_refs(backup) == {}
+
+    def test_a_commit_made_after_the_scan_is_not_pushed_to_origin(self, ws):
+        root, repo, backup = ws
+        _commit(repo, "real.py", "x = 1\n", "scanned commit")
+        scanned = git(repo, "rev-parse", "HEAD")
+        # After the last scan the backup push starts with ls-remote on the
+        # backup repo; commit a token then, as an agent could.
+        wrapper = _stub(root, "gitw",
+                        f'if [ "$1" = ls-remote ] && [ "$2" = "{backup}" ] && [ ! -f "{root}/late" ]; then '
+                        f'touch "{root}/late"; echo "token = \\"{_token()}\\"" > "{repo}/late.txt"; '
+                        f'/usr/bin/git -C "{repo}" add late.txt; '
+                        f'/usr/bin/git -C "{repo}" commit -qm late; fi\n'
+                        'exec /usr/bin/git "$@"\n')
+        bindir = root / "bin"
+        bindir.mkdir()
+        (bindir / "git").symlink_to(wrapper)
+        run(root, "proj  push-only\n", gitleaks=GITLEAKS,
+            PATH=f"{bindir}:{os.environ['PATH']}")
+        assert (root / "late").exists(), "the wrapper never fired; the test proves nothing"
+        assert git(repo, "rev-parse", "origin/main") == scanned
+        assert "late.txt" not in git(repo, "ls-tree", "-r", "--name-only", "origin/main")
+
+    def test_an_allowlist_planted_next_to_the_checkout_is_not_read(self, ws):
+        """A manual run defaults STATE_DIR to the script's own checkout; the
+        allowlist must still come from App Support, not from there."""
+        from app.paths import ref_key
+        root, repo, backup = ws
+        (repo / "creds.txt").write_text(f'token = "{_token()}"\n')
+        first = run(root, "proj  push-only\n", "--dry-run", gitleaks=GITLEAKS)
+        fp = next(line.split("Fingerprint:", 1)[1].strip()
+                  for line in first.stdout.splitlines() if "Fingerprint:" in line)
+        planted = root / "state" / "gitleaksignore"
+        planted.mkdir(parents=True)
+        (planted / ref_key("proj")).write_text(fp + "\n")
+        result = run(root, "proj  push-only\n", gitleaks=GITLEAKS,
+                     AUTOSYNC_IGNORE_DIR="", HOME=str(root))
+        assert "BLOCKED proj" in result.stdout, result.stdout[-1500:]

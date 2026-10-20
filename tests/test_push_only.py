@@ -65,6 +65,7 @@ def run_engine(root: Path, config_text: str, *extra: str):
         # Off here, or every run would reach GitHub and walk the real lab.
         "AUTOSYNC_BACKUP_REMOTE": "",
         "AUTOSYNC_SCAN_ROOTS": "",
+        "AUTOSYNC_IGNORE_DIR": str(root / "ignore"),
     }
     return subprocess.run(["bash", str(ENGINE), *extra],
                           capture_output=True, text=True, env=env)
