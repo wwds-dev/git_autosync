@@ -11,8 +11,9 @@ How changes are made (spec, review, verify and release phases, and the owner's
 approval gates) is in `AGENTS.md`; specs, review reports and role playbooks live in
 `docs/specs/`, `docs/audit/` and `docs/playbooks/`.
 Tests live in `tests/`: the engine is driven against throwaway repos in
-`test_push_only.py` and `test_backup_refs.py` (backups, the snapshot gate, the
-sweep side-branch rule, unlisted repos, a full restore), summary parsing is in
+`test_push_only.py`, `test_backup_refs.py` (backups, the snapshot gate, the
+sweep side-branch rule, unlisted repos, `--backup-only`, the run lock) and
+`test_restore.py` (a whole Mac backed up and restored into an empty home), summary parsing is in
 `test_runner.py` and `test_backup_status.py`, and
 `test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
 to check header labels fit, rows are banded on screen, Pull buttons survive a list
@@ -219,19 +220,49 @@ GitHub remote" when that applies. They count toward the tray's attention state.
 Linked worktrees are not reported: they belong to their repo. Override the roots
 with `AUTOSYNC_SCAN_ROOTS="<dir>=<depth>:..."` (empty switches it off).
 
-### Restoring
+### Restoring (lost or new Mac)
+
+Every real run also pushes a **manifest** to `refs/backup-meta/manifest` in the backup repo:
+every listed repo with its path, origin, checked-out branch and worktrees, a copy of the repo
+list, and git_autosync's allowlist (fingerprints only). `restore.sh` reads it and puts the Mac
+back:
 
 ```bash
-git clone https://github.com/wwds-dev/<repo>.git && cd <repo>
-git fetch https://github.com/wwds-dev/mac_backup.git '+refs/backup/<entry>/*:refs/backup/*'
-git branch fix/thing refs/backup/heads/fix/thing        # a side branch
-git checkout refs/backup/wip/main -- .                  # the uncommitted work, into the tree
+gh auth login && gh auth setup-git
+git clone https://github.com/wwds-dev/git_autosync.git ~/Documents/lab/active/git_autosync
+~/Documents/lab/active/git_autosync/restore.sh --dry-run
+~/Documents/lab/active/git_autosync/restore.sh
 ```
 
-`wip/main` sits on the branch tip it was taken from, so checking it out over that
-branch is safe. For a repo with no `origin`, fetch the same refs into an empty
-`git init` instead. `git ls-remote https://github.com/wwds-dev/mac_backup.git`
-lists everything that is there.
+For each repo it clones origin to the old path (or `git init`s one with no origin), recreates
+every branch at its backed-up commit, checks out the branch it was on and lays the
+uncommitted and untracked files back over it **as uncommitted changes**. Other worktrees and
+stashes come back as branches, `restored/wt/<id>` and `restored/stash/<sha>`: open a worktree
+from one when you need it. The repo list and allowlist go back to App Support if they are not
+there already. It never writes into a folder that already holds files, so restoring parents
+first (`toolbox` before `toolbox/convert_epub`) is automatic and a second run skips what the
+first did. `--only <entry>` restores one repo. A file deleted in the snapshot but present at
+the branch tip stays: the restore adds and changes files, it does not delete them.
+
+**Order on a new Mac:** run `restore.sh` first, then take from the Google Drive copy only
+what git never had — `.env` files and other ignored files from `Backups/MacBook/Documents/`,
+and app data from `Backups/MacBook/Home/Library/Application Support/` (each database there is a
+consistent snapshot). Copying the Drive folders back first would fill the repo folders, and
+`restore.sh` would then skip them: the Drive copy is daily, the backup repo hourly.
+
+Manually, for one repo: `git fetch https://github.com/wwds-dev/mac_backup.git
+'+refs/backup/<entry>/*:refs/backup/*'`, then branch from `refs/backup/heads/…` and
+`git restore --source=refs/backup/wip/main --worktree -- .`.
+
+### Hourly backups
+
+The schedule dialog's **Also back up every hour** installs a second LaunchAgent
+(`com.wwds-dev.git-autosync-hourly`) that runs `git_autosync.sh --backup-only` every hour: the
+same gate and backup push, plus the manifest, but nothing is staged or committed and nothing
+is pushed to any project's GitHub repo. It records `last_backup.txt`, never `last_sync.txt`, and
+turns the tray to attention only on a failure. Only one run of any kind runs at a time: a run
+that finds `run.lock` held by a live process exits at once; a lock whose process is gone, or
+over 2 hours old, is taken over.
 
 ## Publishing a new project to GitHub
 

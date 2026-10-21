@@ -8,6 +8,9 @@
 
 ## v2 — current
 
+- [x] `P1` `feature` `@ai` **Lose the Mac, keep working** (`docs/specs/restore-and-continue.md`, approved 2026-10-21): `restore.sh` + manifest, hourly `--backup-only` agent, app data and configs in the Drive copy (`_Admin/backup/backup_paths.txt`, SQLite via `.backup`).
+- [ ] `P1` `security` `@me` **Item 4: secrets.** `.env` files and now app data (databases) sit unencrypted in Google Drive; `~/.ssh/id_rsa` and the gh token are backed up nowhere. Next spec.
+
 - [x] `P1` `feature` `@ai` **Back up everything on this Mac, not just the checked-out branch** (`docs/specs/full-mac-backup.md`, approved 2026-10-20). Branches, every worktree's uncommitted work and stashes go to `refs/backup/*` in private `wwds-dev/mac_backup`; rows say **Backed up** only when all of it is there; unlisted repos are flagged; sweep commits only on the default branch.
 - [x] `P1` `infra` `@ai` **Private `wwds-dev/mac_backup` repo created** 2026-10-20 (owner-approved), empty until the first real run of this build.
 - [ ] `P2` `infra` `@me` **Decide on the two unlisted repos** the scan flags: the lab root (`wwds-dev/lab`, already on GitHub) and `~/Documents/Websites/shopfront` (no remote). Add each to the list, or accept the attention state.
