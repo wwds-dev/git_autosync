@@ -44,6 +44,11 @@ if [ -n "$bad" ]; then
   echo "ERROR: the bundle holds paths outside its home/ folder - refusing it:"; echo "$bad" | head -5 | sed 's/^/  /'
   exit 1
 fi
+# Regular files and folders only: a symlink entry would be followed by the
+# checksum and the copy (security review).
+if tar -tvzf "$BUNDLE" 2>/dev/null | grep -qvE '^[-d]'; then
+  echo "ERROR: the bundle holds links or special files - refusing it"; exit 1
+fi
 tar -xzf "$BUNDLE" -C "$TMP" || { echo "ERROR: cannot read the bundle"; exit 1; }
 [ -f "$TMP/MANIFEST.tsv" ] || { echo "ERROR: the bundle has no MANIFEST.tsv"; exit 1; }
 
@@ -51,6 +56,13 @@ n_ok=0; n_skip=0; n_bad=0
 while IFS=$'\t' read -r path size sha; do
   rel="${path#\~/}"
   case "/$rel/" in */../*|*/./*) echo "  REFUSED  $path"; n_bad=$((n_bad+1)); continue ;; esac
+  # Only where secrets live: ~/Documents and the apps' own folders. Not
+  # ~/.zshrc, not LaunchAgents: nothing that runs at login.
+  case "$rel" in
+    Documents/*|"Library/Application Support/"*) ;;
+    *) echo "  REFUSED  $path (outside ~/Documents and ~/Library/Application Support)"; n_bad=$((n_bad+1)); continue ;;
+  esac
+  if [ -L "$TMP/home/$rel" ]; then echo "  REFUSED  $path (a link)"; n_bad=$((n_bad+1)); continue; fi
   src="$TMP/home/$rel"; dst="$INTO/$rel"
   if [ ! -f "$src" ] || [ "$(shasum -a 256 "$src" | cut -d' ' -f1)" != "$sha" ]; then
     echo "  CORRUPT  $path (missing or checksum mismatch) - not restored"; n_bad=$((n_bad+1)); continue
@@ -59,7 +71,7 @@ while IFS=$'\t' read -r path size sha; do
     echo "  KEPT     $path (the file here is newer)"; n_skip=$((n_skip+1)); continue
   fi
   if [ "$DRY_RUN" -eq 1 ]; then echo "  WOULD    $path"; n_ok=$((n_ok+1)); continue; fi
-  mkdir -p "$(dirname "$dst")" && cp -p "$src" "$dst" && chmod 600 "$dst" \
+  mkdir -p "$(dirname "$dst")" && install -m 600 "$src" "$dst" \
     && { echo "  OK       $path"; n_ok=$((n_ok+1)); } \
     || { echo "  FAILED   $path"; n_bad=$((n_bad+1)); }
 done < "$TMP/MANIFEST.tsv"

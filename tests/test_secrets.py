@@ -115,3 +115,45 @@ def test_a_crafted_bundle_cannot_write_outside_home(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode != 0 and "refusing" in r.stdout
     assert not (tmp_path / "pwn").exists()
+
+
+def test_more_env_spellings_are_bundled_not_left_for_google(fake_mac):
+    root, home, vault = fake_mac
+    proj = home / "Documents" / "lab" / "active" / "proj"
+    for n in (".envrc", "env.local", "config.env.local", "secrets.env.bak", ".env-prod"):
+        (proj / n).write_text("X=dummy\n")
+    (proj / "env.py").write_text("x = 1\n")
+    bundle(root, home, vault)
+    names = tarfile.open(vault / "Vault" / "Credentials-Recovery" / "Mac-secrets" / "latest.tar.gz").getnames()
+    for n in (".envrc", "env.local", "config.env.local", "secrets.env.bak", ".env-prod"):
+        assert f"home/Documents/lab/active/proj/{n}" in names, n
+    assert "home/Documents/lab/active/proj/env.py" not in names
+
+
+def test_a_symlinked_vault_or_a_google_folder_is_refused(fake_mac):
+    root, home, vault = fake_mac
+    link = root / "link"
+    link.symlink_to(vault)
+    assert bundle(root, home, vault, ("PROTON_ROOT", str(link))).returncode != 0
+    g = root / "CloudStorage" / "GoogleDrive-x"
+    g.mkdir(parents=True)
+    r = bundle(root, home, vault, ("PROTON_ROOT", str(g)))
+    assert r.returncode != 0 and "not a Proton folder" in r.stderr
+
+
+def test_restore_refuses_paths_that_run_at_login_and_link_entries(tmp_path):
+    for name, kind in (("home/.zshrc", "file"), ("home/Documents/x", "link")):
+        evil = tmp_path / f"evil_{kind}.tar.gz"
+        with tarfile.open(evil, "w:gz") as t:
+            rel = name[len("home/"):]
+            m = f"~/{rel}\t1\tx\n".encode()
+            info = tarfile.TarInfo("MANIFEST.tsv"); info.size = len(m); t.addfile(info, io.BytesIO(m))
+            info = tarfile.TarInfo(name)
+            if kind == "link":
+                info.type = tarfile.SYMTYPE; info.linkname = "/etc/hosts"; t.addfile(info)
+            else:
+                info.size = 1; t.addfile(info, io.BytesIO(b"x"))
+        r = subprocess.run(["bash", str(RESTORE), str(evil), "--into", str(tmp_path / "into")],
+                           capture_output=True, text=True)
+        assert r.returncode != 0 and ("REFUSED" in r.stdout or "refusing" in r.stdout), r.stdout
+        assert not (tmp_path / "into" / rel).exists()

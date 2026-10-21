@@ -461,6 +461,16 @@ bk_filter(){
 # used: it has no -u, and untracked files are most of what goes missing (15
 # of foundry's 17 files). The real index is copied, not used: its stat cache
 # keeps this fast, and the copy is the only index written.
+# Credential file names are kept out of the temporary index from the start,
+# not dropped after `git add -A`: the add writes each file's content into
+# .git/objects, and .git is copied to Google Drive (secrets-vault review P2-2).
+# Those files go to the Proton vault instead (_Admin/backup/backup_secrets.sh).
+CRED_PATHSPEC=()
+for _p in .env '.env.*' '.env-*' '.env_*' '*.env' '*.env.*' .envrc .netrc .npmrc .pypirc .pgpass \
+          .git-credentials '*.pem' '*.key' '*.p12' '*.pfx' '*.der' 'id_rsa*' 'id_ed25519*' 'id_ecdsa*' \
+          '*.kdbx' '*.keychain' '*.keychain-db'; do
+  CRED_PATHSPEC+=(":(exclude,glob)**/$_p")
+done
 snapshot_worktree(){
   local wt="$1" idx="$2" head base real tree empty
   empty="$(git -C "$wt" hash-object -t tree /dev/null)"
@@ -470,9 +480,9 @@ snapshot_worktree(){
   rm -f "$idx"
   { [ -f "$real" ] && cp "$real" "$idx" 2>/dev/null; } \
     || GIT_INDEX_FILE="$idx" git -C "$wt" read-tree "$base" || return 1
-  GIT_INDEX_FILE="$idx" git -C "$wt" add -A >/dev/null 2>&1 \
+  GIT_INDEX_FILE="$idx" git -C "$wt" add -A -- . "${CRED_PATHSPEC[@]}" >/dev/null 2>&1 \
     || { rm -f "$idx"; GIT_INDEX_FILE="$idx" git -C "$wt" read-tree "$base" \
-         && GIT_INDEX_FILE="$idx" git -C "$wt" add -A >/dev/null 2>&1; } || return 1
+         && GIT_INDEX_FILE="$idx" git -C "$wt" add -A -- . "${CRED_PATHSPEC[@]}" >/dev/null 2>&1; } || return 1
   bk_filter "$wt" "$idx" "$base"
   tree="$(GIT_INDEX_FILE="$idx" git -C "$wt" write-tree)" || return 1
   if [ "$tree" = "$(git -C "$wt" rev-parse "$base^{tree}")" ]; then

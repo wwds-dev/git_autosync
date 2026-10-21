@@ -462,7 +462,14 @@ class TestWhatIsLeftOut:
         assert {"keep.py", "logo.png"} <= files
         assert not files & {".env.local", ".netrc", "id_service.der", "app.db", "notes.pdf", "blob.bin"}
         assert "BACKUP  proj  (partial:" in result.stdout
-        assert "6 file(s) left out" in result.stdout
+        # Credential names never enter the temporary index (so never .git/objects);
+        # the other three are left out after it and counted.
+        assert "3 file(s) left out" in result.stdout
+        for name in (".env.local", ".netrc", "id_service.der"):
+            blob = subprocess.run(["git", "-C", str(repo), "hash-object", name],
+                                  capture_output=True, text=True).stdout.strip()
+            assert subprocess.run(["git", "-C", str(repo), "cat-file", "-e", blob]).returncode != 0, (
+                f"{name} was written into .git/objects")
 
     def test_big_files_with_odd_names_or_grown_in_place_are_left_out(self, ws):
         root, repo, backup = ws
