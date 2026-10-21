@@ -16,6 +16,11 @@ LABEL = "com.wwds-dev.git-autosync"
 # The account was renamed from Netrunner3000; agents installed under the old
 # label keep running until they are unloaded, so migrate rather than orphan.
 LEGACY_LABELS = ("com.netrunner3000.git-autosync",)
+# A second, independent agent: `--backup-only` every hour, so work is never
+# more than an hour from the backup repo. It never stages, commits or pushes
+# to origin, so it can run far more often than the sync (restore-and-continue).
+HOURLY_LABEL = "com.wwds-dev.git-autosync-hourly"
+HOURLY_SECONDS = 60 * 60
 
 
 def plist_path() -> Path:
@@ -100,12 +105,13 @@ def get_schedule() -> dict | None:
     return None
 
 
-def _base_plist(config_path: Path, run_at_load: bool) -> dict:
+def _base_plist(config_path: Path, run_at_load: bool, label: str = LABEL,
+                extra_args: tuple[str, ...] = ()) -> dict:
     bash = paths.find_binary("bash") or "/bin/bash"
     log_dir = paths.user_log_dir()
     return {
-        "Label": LABEL,
-        "ProgramArguments": [bash, str(paths.engine_script())],
+        "Label": label,
+        "ProgramArguments": [bash, str(paths.engine_script()), *extra_args],
         "EnvironmentVariables": {
             "PATH": paths.child_env_path(),
             "AUTOSYNC_CONFIG": str(config_path),
@@ -132,8 +138,30 @@ def install_calendar(hour: int, minute: int, config_path: Path, run_at_load: boo
     _write_and_load(plist)
 
 
-def _write_and_load(plist: dict) -> None:
-    path = plist_path()
+def hourly_plist_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{HOURLY_LABEL}.plist"
+
+
+def is_hourly_backup_installed() -> bool:
+    return hourly_plist_path().exists()
+
+
+def install_hourly_backup(config_path: Path) -> None:
+    plist = _base_plist(config_path, run_at_load=False, label=HOURLY_LABEL,
+                        extra_args=("--backup-only",))
+    plist["StartInterval"] = HOURLY_SECONDS
+    _write_and_load(plist, hourly_plist_path())
+
+
+def uninstall_hourly_backup() -> None:
+    path = hourly_plist_path()
+    if path.exists():
+        subprocess.run(["launchctl", "unload", str(path)], capture_output=True)
+        path.unlink()
+
+
+def _write_and_load(plist: dict, path: Path | None = None) -> None:
+    path = path or plist_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         plistlib.dump(plist, f)

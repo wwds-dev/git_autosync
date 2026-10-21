@@ -4,6 +4,7 @@ LaunchAgent). Exposes every option relevant to a scheduled sync: how often
 from PySide6.QtCore import QTime
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -98,6 +99,18 @@ class ScheduleDialog(QDialog):
         form2.addRow("Run immediately when enabled:", self.run_at_load_combo)
         layout.addLayout(form2)
 
+        # Independent of the sync schedule above: its own LaunchAgent.
+        # Short label: a QCheckBox cannot wrap, and a long one sets the
+        # dialog's minimum width. The detail is in the tooltip.
+        self.hourly_box = QCheckBox("Also back up every hour")
+        self.hourly_box.setToolTip(
+            "Every hour, branches and uncommitted work go to the private backup "
+            "repo. Nothing is committed, and nothing is pushed to the projects' "
+            "own GitHub repos; that stays with the schedule above.")
+        self.hourly_box.setChecked(scheduler.is_hourly_backup_installed())
+        self.hourly_box.toggled.connect(self._on_hourly_toggled)
+        layout.addWidget(self.hourly_box)
+
         layout.addStretch(1)
 
         buttons_row = QHBoxLayout()
@@ -113,6 +126,18 @@ class ScheduleDialog(QDialog):
         close_buttons.rejected.connect(self.reject)
         close_buttons.button(QDialogButtonBox.Close).clicked.connect(self.reject)
         layout.addWidget(close_buttons)
+
+    def _on_hourly_toggled(self, on: bool):
+        try:
+            if on:
+                scheduler.install_hourly_backup(self.config_path)
+            else:
+                scheduler.uninstall_hourly_backup()
+        except Exception as e:   # launchctl refused: say so, show the real state
+            QMessageBox.warning(self, "Hourly backup", f"Could not change the hourly backup: {e}")
+            self.hourly_box.blockSignals(True)
+            self.hourly_box.setChecked(scheduler.is_hourly_backup_installed())
+            self.hourly_box.blockSignals(False)
 
     def _on_mode_changed(self, interval_checked: bool):
         self.stack.setCurrentIndex(0 if interval_checked else 1)
