@@ -247,7 +247,8 @@ stashes come back as branches, `restored/wt/<id>` and `restored/stash/<sha>`: op
 from one when you need it. The repo list and allowlist go back to App Support if they are not
 there already. It never writes into a folder that already holds files, so restoring parents
 first (`toolbox` before `toolbox/convert_epub`) is automatic and a second run skips what the
-first did. `--only <entry>` restores one repo. A file deleted in the snapshot but present at
+first did. `--only <entry>` restores one repo; `--into <dir>` restores under `<dir>` instead of your
+home (a drill: `restore.sh --only sentinel --into /tmp/drill` leaves the real repo alone). A file deleted in the snapshot but present at
 the branch tip stays: the restore adds and changes files, it does not delete them.
 
 **Order on a new Mac:** run `restore.sh` first, then take from the Google Drive copy only

@@ -193,12 +193,14 @@ GL_NOTED=""
 SCAN_LABEL=""
 GL_PUB=""
 GL_PUB_REF=""
+GL_OFFLINE=0
 gl_repo_init(){
   local dir="$1" out sha
-  GL_PUB=""; GL_PUB_REF=""; GL_NOTED=""
+  GL_PUB=""; GL_PUB_REF=""; GL_NOTED=""; GL_OFFLINE=0
   git -C "$dir" remote get-url origin >/dev/null 2>&1 || return 0
   if ! out="$(git -C "$dir" ls-remote --symref origin HEAD 2>/dev/null)"; then
-    log "  cannot reach origin to read its scanner config - using default rules"
+    log "  cannot reach origin - network problem, skipping this repo this run"
+    GL_OFFLINE=1
     return 0
   fi
   GL_PUB_REF="$(printf '%s\n' "$out" | awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }')"
@@ -817,6 +819,13 @@ process_repo(){
 
   SCAN_LABEL="$label"
   gl_repo_init "$dir"
+  # Offline, the gate would fall back to default rules without the published
+  # allowlist and report allowlisted fixtures as secrets and the repo's own
+  # scanner config as "changed" (the night of 2026-10-21). Say what it is.
+  if [ "$GL_OFFLINE" -eq 1 ]; then
+    unstage
+    SUMMARY+=("ERROR   $label  (network problem reaching GitHub — transient, try again)"); N_ERR=$((N_ERR+1)); return
+  fi
   capture_refs
 
   # ---- THE GATE ----

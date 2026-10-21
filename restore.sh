@@ -18,6 +18,8 @@
 #     ./restore.sh                 # restore everything
 #     ./restore.sh --dry-run       # say what it would do, change nothing
 #     ./restore.sh --only ENTRY    # one repo (its config entry, e.g. sonar/sonar/macro)
+#     ./restore.sh --into DIR      # a drill: restore under DIR instead of $HOME
+#                                  # (~/Documents/x lands in DIR/Documents/x)
 #
 #  docs/specs/restore-and-continue.md; README "Restoring".
 # =============================================================================
@@ -28,10 +30,12 @@ LAB_ACTIVE="${LAB_ACTIVE:-$HOME/Documents/lab/active}"
 SUPPORT="${AUTOSYNC_SUPPORT_DIR:-$HOME/Library/Application Support/git_autosync}"
 DRY_RUN=0
 ONLY=""
+INTO="$HOME"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --only) ONLY="${2:-}"; shift ;;
+    --into) INTO="${2:-}"; shift; [ -n "$INTO" ] || { echo "--into needs a folder"; exit 2; } ;;
     -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1"; exit 2 ;;
   esac
@@ -57,7 +61,7 @@ ref_key(){
   done
   printf '%s' "$out"
 }
-expand(){ case "$1" in "~"*) printf '%s' "$HOME${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
+expand(){ case "$1" in "~"*) printf '%s' "$INTO${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
 
 # The manifest comes from the backup repo, and this runs on a new Mac with
 # nothing else to check it: only a path under ~/Documents with no `..`, only

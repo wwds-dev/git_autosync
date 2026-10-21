@@ -29,3 +29,4 @@
 {"ts": "2026-10-21T18:35:16", "phase": "define", "state": "blocked", "spec": "restore-and-continue"}
 {"ts": "2026-10-21T19:06:51", "phase": "define", "state": "done", "spec": "restore-and-continue"}
 {"ts": "2026-10-21T19:06:51", "phase": "architect", "state": "done", "spec": "restore-and-continue"}
+{"ts": "2026-10-21T19:50:48", "phase": "release", "state": "done", "spec": "restore-and-continue"}

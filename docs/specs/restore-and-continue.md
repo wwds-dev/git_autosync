@@ -2,7 +2,7 @@
 
 Status: **Define and Architect approved by the owner 2026-10-21**, all four decisions as
 recommended (hourly; worktrees as branches; the listed app-data paths, no `~/.ssh` or gh
-token; app data to Drive now in plaintext until item 4). Build on `feat/restore-and-continue`.
+token; app data to Drive now in plaintext until item 4). **Released 2026-10-21.**
 Follows `full-mac-backup.md` (released 2026-10-21, v2.118).
 
 ## Define
@@ -99,3 +99,23 @@ branches, half-finished edits, app data — with as little to remember as possib
 4. **App data goes to Drive in plaintext now** (as `.env` files already do), and item 4 moves
    secrets to encrypted storage. Recommended: yes, now — losing a database is worse than its
    staying in plaintext a few more days. Alternative: wait until item 4 is done.
+
+## Release (2026-10-21)
+
+Review and security findings (no P0/P1) fixed: `docs/audit/restore-and-continue-*.md`. Suite:
+189 passed. Installed as v2.125; the LaunchAgents run the master checkout's engine.
+
+- **Hourly backup on:** `com.wwds-dev.git-autosync-hourly` loaded; kicked once through launchd:
+  21 repos `BACKUP … ok`, manifest pushed (21 repos), exit 0, `last_backup.txt` written.
+- **Live restore drill:** `restore.sh --only sentinel --into <scratch>` from GitHub and
+  `mac_backup` in 4 s: every branch at its backed-up SHA (one branch created three minutes after
+  the last hourly backup was, as expected, not yet there), on `main`, 7 `restored/*` branches
+  (from worktrees, including ones removed since — stale refs are kept).
+- **App data to Drive: not yet run for real.** This session's sandbox may not write into the
+  Google Drive folder ("Operation not permitted"), and the daily job runs through the Backup
+  Control Center app, which a launchd kick from here could not start (exit 78). The script was
+  verified against a scratch folder (35 MB, all 10 databases pass `integrity_check`); the real
+  copy happens on the next daily run or **Run backup now** in BCC.
+- **Found in last night's log and fixed:** offline, the gate fell back to default rules and
+  reported allowlisted fixtures as "secret in history" and four repos as "scanner config
+  changed". An unreachable origin is now reported as a network error and the repo skipped.

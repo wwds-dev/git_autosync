@@ -945,3 +945,12 @@ class TestUnbornBranch:
         assert "scanner error" not in result.stdout, result.stdout[-1500:]
         snap = backup_refs(backup)["refs/backup/fresh/wip/main"]
         assert "first.py" in git(backup, "ls-tree", "-r", "--name-only", snap)
+
+
+class TestOffline:
+    def test_an_unreachable_origin_is_a_network_error_not_a_secret(self, ws):
+        root, repo, backup = ws
+        git(repo, "remote", "set-url", "origin", str(root / "gone.git"))
+        result = run(root, "proj  push-only\n")
+        assert "ERROR   proj  (network problem reaching GitHub" in result.stdout, result.stdout[-1500:]
+        assert "BLOCKED" not in result.stdout and "scanner config changed" not in result.stdout
