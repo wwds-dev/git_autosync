@@ -11,6 +11,10 @@
 #  Usage:
 #     ./git_autosync.sh              # sync everything in the config
 #     ./git_autosync.sh --dry-run    # scan + report only, never commit/push
+#     ./git_autosync.sh --backup-only
+#                                     # back up to the backup repo only: no
+#                                     # staging, no commits, no push to origin
+#                                     # (the hourly LaunchAgent runs this)
 #     ./git_autosync.sh --repo NAME  # just one repo from the config
 #     ./git_autosync.sh --repo NAME --create-remote public|private
 #                                     # for a repo with no GitHub remote yet:
@@ -30,12 +34,14 @@ LAB_ACTIVE="${LAB_ACTIVE:-$HOME/Documents/lab/active}"
 GITLEAKS="${GITLEAKS_CMD:-gitleaks}"
 GH="${GH_CMD:-gh}"
 DRY_RUN=0
+BACKUP_ONLY=0
 ONLY=""
 CREATE_REMOTE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --backup-only) BACKUP_ONLY=1 ;;
     --repo)    ONLY="${2:-}"; shift ;;
     --create-remote) CREATE_REMOTE="${2:-}"; shift ;;
     -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
@@ -60,7 +66,25 @@ ts(){ date '+%Y-%m-%d %H:%M:%S'; }
 log(){ echo "$(ts) | $*" | tee -a "$LOG"; }
 rule(){ echo "---------------------------------------------" | tee -a "$LOG"; }
 
-log "=== git_autosync start (dry-run=$DRY_RUN) ==="
+log "=== git_autosync start (dry-run=$DRY_RUN backup-only=$BACKUP_ONLY) ==="
+
+# One run at a time: the hourly backup, the 03:30 sync and a run from the GUI
+# all walk the same repos, and a sweep stages into a real index. A lock left
+# by a run that died (its PID is gone, or it is over 2 hours old) is taken over.
+RUN_LOCK="$STATE_DIR/run.lock"
+mkdir -p "$STATE_DIR"
+if ! mkdir "$RUN_LOCK" 2>/dev/null; then
+  lock_pid="$(cat "$RUN_LOCK/pid" 2>/dev/null)"
+  if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null \
+     && [ -z "$(find "$RUN_LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
+    log "SKIPPED: another git_autosync run is in progress (pid $lock_pid) - nothing done"
+    exit 0
+  fi
+  log "  taking over a stale run lock (pid ${lock_pid:-unknown})"
+  rm -rf "$RUN_LOCK"; mkdir "$RUN_LOCK" || { log "ERROR: cannot take the run lock"; exit 1; }
+fi
+echo $$ > "$RUN_LOCK/pid"
+trap 'rm -rf "$RUN_LOCK"' EXIT   # widened below once the temp dir exists
 
 # --- preflight -------------------------------------------------------------
 if ! command -v "$GITLEAKS" >/dev/null 2>&1; then
@@ -90,7 +114,7 @@ resolve_repo(){
 }
 
 BK_TMP="$(mktemp -d "${TMPDIR:-/tmp}/autosync_backup.XXXXXX")"
-trap 'rm -rf "$BK_TMP"' EXIT
+trap 'rm -rf "$BK_TMP" "$RUN_LOCK"' EXIT
 
 # --- the gate ----------------------------------------------------------------
 # Run a gitleaks scan. Returns: 0 = clean, 1 = LEAK found, 2 = tool error.
@@ -732,6 +756,7 @@ process_repo(){
   # branch; side branches go to the backup repo, not to GitHub as branches
   # (owner, 2026-10-20). So that run commits nothing and leaves origin alone.
   cur="$(git branch --show-current)"
+  [ "$BACKUP_ONLY" -eq 1 ] && mode="push-only"   # never stage in a backup-only run
   if [ "$mode" = "sweep" ]; then
     def="$(default_branch)"
     if [ -z "$cur" ] || [ "$cur" != "$def" ]; then
@@ -825,7 +850,7 @@ process_repo(){
   # without counting them a dry-run reports "nothing to commit" and the GUI
   # badges the repo Clean while a push is still pending.
   ahead=0; behind=0
-  if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  if [ "$BACKUP_ONLY" -eq 0 ] && git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
     # Fetch first: without it @{u} is whatever was last seen locally, so a
     # remote that moved on looks like "nothing to do" right up until the push
     # is rejected with "fetch first".
@@ -842,6 +867,9 @@ process_repo(){
     backup_push "$label"
   fi
 
+  if [ "$BACKUP_ONLY" -eq 1 ]; then
+    SUMMARY+=("OK      $label  (backup only - origin left alone)"); N_NOOP=$((N_NOOP+1)); return
+  fi
   if [ "$no_origin" -eq 1 ]; then
     SUMMARY+=("SKIP    $label  (no GitHub remote)"); N_SKIP=$((N_SKIP+1)); return
   fi
@@ -1046,6 +1074,83 @@ while IFS= read -r line || [ -n "$line" ]; do
   process_repo "$entry" "$mode"
 done < "$CONFIG"
 
+# --- the manifest: what restore.sh needs to put this Mac back -----------------
+# The repo list lives only on this Mac, so after losing it even *which* repos
+# to restore would be gone. Every real run pushes one commit to
+# refs/backup-meta/manifest in the backup repo (outside refs/backup/, so no
+# entry can collide with it): manifest.tsv, a copy of the repo list, and
+# git_autosync's allowlist (fingerprints only). It is built in a scratch
+# repository, deterministic (same content, same SHA, nothing pushed), and
+# scanned by gitleaks before it goes.
+#
+# manifest.tsv, tab-separated, one line per repo and per linked worktree:
+#   repo  <entry>  <mode>  <path, ~ for $HOME>  <origin URL>  <checked-out branch>
+#   ("-" for an empty origin URL or a detached HEAD)
+#   wt    <entry>  <worktree ref id>  <path>  <branch>
+home_path(){ case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }
+push_manifest(){
+  local meta="$BK_TMP/meta.git" mf="$BK_TMP/manifest.tsv" line entry flags mode dir url br
+  local wt gd tree c rc remote_sha f
+  : > "$mf"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"; line="$(echo "$line" | xargs)"; [ -z "$line" ] && continue
+    entry="${line%% *}"; flags=" ${line#"$entry"} "
+    mode="sweep"; case "$flags" in *" push-only "*) mode="push-only" ;; esac
+    dir="$(resolve_repo "$entry")"
+    [ -e "$dir/.git" ] || continue
+    # Credentials in a remote URL (https://user:token@host) never leave the Mac.
+    url="$(git -C "$dir" remote get-url origin 2>/dev/null | sed -E 's#^(https?://)[^/@]*@#\1#')"
+    br="$(git -C "$dir" branch --show-current 2>/dev/null)"
+    # "-" for an empty field: bash's read folds consecutive tabs into one.
+    printf 'repo\t%s\t%s\t%s\t%s\t%s\n' "$entry" "$mode" "$(home_path "$dir")" "${url:--}" "${br:--}" >> "$mf"
+    wt=""; local n=0
+    while IFS= read -r line; do
+      case "$line" in
+        "worktree "*) wt="${line#worktree }"; n=$((n+1)) ;;
+        "branch "*|detached)
+          [ "$n" -gt 1 ] || continue   # the first entry is the main worktree
+          gd="$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)" || continue
+          br=""; case "$line" in "branch "*) br="${line#branch refs/heads/}" ;; esac
+          printf 'wt\t%s\t%s\t%s\t%s\n' "$entry" "$(ref_key "$(basename "$gd")")" "$(home_path "$wt")" "${br:--}" >> "$mf" ;;
+      esac
+    done < <(git -C "$dir" worktree list --porcelain 2>/dev/null)
+  done < "$CONFIG"
+
+  rm -rf "$meta"; git init -q --bare "$meta" || return 1
+  export GIT_DIR="$meta" GIT_INDEX_FILE="$BK_TMP/meta_index"
+  rm -f "$GIT_INDEX_FILE"
+  git update-index --add --cacheinfo "100644,$(git hash-object -w "$mf"),manifest.tsv"
+  git update-index --add --cacheinfo "100644,$(git hash-object -w "$CONFIG"),autosync_repos.txt"
+  if [ -d "$IGNORE_DIR" ]; then
+    for f in "$IGNORE_DIR"/*; do
+      [ -f "$f" ] || continue
+      git update-index --add --cacheinfo \
+        "100644,$(grep -E '^[0-9a-f]{40}:' "$f" | git hash-object -w --stdin),allowlist/$(basename "$f")"
+    done
+  fi
+  tree="$(git write-tree)"; c="$(bk_commit "$tree" "" "autosync backup: manifest")"
+  unset GIT_DIR GIT_INDEX_FILE
+  printf '[extend]\nuseDefault = true\n' > "$GL_CFG"
+  gl_run git --no-banner --redact --verbose --config "$GL_CFG" --log-opts="$c" "$meta"; rc=$?
+  if [ $rc -ne 0 ]; then
+    log "  manifest: NOT pushed - the scan did not come back clean"; N_ERR=$((N_ERR+1)); return 1
+  fi
+  remote_sha="$(git ls-remote "$BACKUP_REMOTE" refs/backup-meta/manifest 2>/dev/null | awk '{print $1}')"
+  if [ "$remote_sha" = "$c" ]; then log "  manifest: up to date."; return 0; fi
+  if git --git-dir="$meta" push -q --no-verify "$BACKUP_REMOTE" "+$c:refs/backup-meta/manifest" >>"$LOG" 2>&1; then
+    log "  manifest: pushed ($(grep -c '^repo' "$mf") repo(s))."
+  else
+    log "  manifest: push FAILED (see log)"; N_ERR=$((N_ERR+1)); return 1
+  fi
+}
+if [ "$DRY_RUN" -eq 0 ] && [ -n "$BACKUP_REMOTE" ]; then
+  rule
+  log "MANIFEST"
+  bk_preflight
+  if [ "$BK_PRE" = "ok" ]; then push_manifest
+  else log "  manifest: FAILED — $BK_PRE"; N_ERR=$((N_ERR+1)); fi
+fi
+
 # --- repos on disk that nothing backs up -----------------------------------
 # A repo missing from the list is not backed up at all, and used to be
 # invisible. Scan roots are "<dir>=<depth>" separated by ':'; depth 0 checks
@@ -1098,7 +1203,12 @@ log "=== git_autosync end ==="
 # Record when a real (non-dry-run) run last completed, regardless of outcome,
 # plus a one-word status ("ok" / "attention") — the GUI's tray icon and the
 # scheduled background job both read these two files.
-if [ "$DRY_RUN" -eq 0 ]; then
+if [ "$DRY_RUN" -eq 0 ] && [ "$BACKUP_ONLY" -eq 1 ]; then
+  # A backup-only run is not a sync: it leaves last_sync and a clean status to
+  # the full runs, but a failure still turns the tray to attention.
+  if [ $((N_BLOCKED + N_ERR)) -eq 0 ]; then ts > "$STATE_DIR/last_backup.txt"
+  else echo "attention" > "$STATE_DIR/last_status.txt"; fi
+elif [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$STATE_DIR"
   ts > "$STATE_DIR/last_sync.txt"
   # An unlisted repo is not an error in this run, but it is something on this

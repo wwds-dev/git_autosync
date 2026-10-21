@@ -80,7 +80,8 @@ def run(root: Path, config_text: str, *extra: str, gitleaks: str = "/usr/bin/tru
 
 
 def backup_refs(backup: Path) -> dict[str, str]:
-    out = git(backup, "for-each-ref", "--format=%(objectname) %(refname)")
+    """The repos' backup refs; the run's manifest (refs/backup-meta/) is separate."""
+    out = git(backup, "for-each-ref", "--format=%(objectname) %(refname)", "refs/backup/")
     return {ref: sha for sha, ref in (line.split() for line in out.splitlines())}
 
 
@@ -840,3 +841,53 @@ class TestFourthRound:
         result = run(root, "proj  push-only\n", gitleaks=GITLEAKS)
         assert "scanner config changed" not in result.stdout, result.stdout[-1500:]
         assert git(repo, "rev-parse", "origin/side") == git(repo, "rev-parse", "side")
+
+
+class TestBackupOnly:
+    """The hourly run: backup refs only, nothing else (restore-and-continue)."""
+
+    def test_it_commits_nothing_and_leaves_origin_alone(self, ws):
+        root, repo, backup = ws
+        (repo / "w.txt").write_text("hourly\n")
+        head, origin = git(repo, "rev-parse", "HEAD"), git(repo, "ls-remote", "origin")
+        result = run(root, "proj\n", "--backup-only")   # a sweep entry, on purpose
+        assert result.returncode == 0, result.stdout[-1500:]
+        assert git(repo, "rev-parse", "HEAD") == head
+        assert git(repo, "ls-remote", "origin") == origin
+        assert "?? w.txt" in git(repo, "status", "--porcelain")
+        assert f"{PREFIX}/wip/main" in backup_refs(backup)
+        assert "backup only - origin left alone" in result.stdout
+
+    def test_it_does_not_claim_a_sync(self, ws):
+        root, repo, backup = ws
+        run(root, "proj  push-only\n", "--backup-only")
+        assert not (root / "state" / "last_sync.txt").exists()
+        assert (root / "state" / "last_backup.txt").exists()
+
+    def test_it_pushes_the_manifest(self, ws):
+        root, repo, backup = ws
+        run(root, "proj  push-only\n", "--backup-only")
+        assert "repo\tproj\tpush-only" in git(backup, "show", "refs/backup-meta/manifest:manifest.tsv")
+
+
+class TestOneRunAtATime:
+    def test_a_second_run_exits_while_one_is_going(self, ws):
+        root, repo, backup = ws
+        lock = root / "state" / "run.lock"
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text(f"{os.getpid()}\n")   # alive: this test process
+        (repo / "w.txt").write_text("w\n")
+        result = run(root, "proj  push-only\n")
+        assert "another git_autosync run is in progress" in result.stdout
+        assert result.returncode == 0 and backup_refs(backup) == {}
+        assert lock.exists(), "a run that did not take the lock must not remove it"
+
+    def test_a_lock_left_by_a_dead_run_is_taken_over(self, ws):
+        root, repo, backup = ws
+        lock = root / "state" / "run.lock"
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text("999999\n")
+        result = run(root, "proj  push-only\n")
+        assert "taking over a stale run lock" in result.stdout
+        assert f"{PREFIX}/heads/main" in backup_refs(backup)
+        assert not lock.exists(), "the lock is released at the end of the run"
