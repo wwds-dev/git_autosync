@@ -27,3 +27,5 @@
 {"ts": "2026-10-21T00:17:11", "phase": "release", "state": "done", "spec": "full-mac-backup"}
 {"ts": "2026-10-21T18:34:13", "phase": "define", "state": "start", "spec": "restore-and-continue"}
 {"ts": "2026-10-21T18:35:16", "phase": "define", "state": "blocked", "spec": "restore-and-continue"}
+{"ts": "2026-10-21T19:06:51", "phase": "define", "state": "done", "spec": "restore-and-continue"}
+{"ts": "2026-10-21T19:06:51", "phase": "architect", "state": "done", "spec": "restore-and-continue"}

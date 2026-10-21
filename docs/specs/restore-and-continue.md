@@ -1,6 +1,8 @@
 # Spec: lose the Mac, keep working
 
-Status: **Define + proposed Architect — waiting for the owner (GATE)**. Nothing built.
+Status: **Define and Architect approved by the owner 2026-10-21**, all four decisions as
+recommended (hourly; worktrees as branches; the listed app-data paths, no `~/.ssh` or gh
+token; app data to Drive now in plaintext until item 4). Build on `feat/restore-and-continue`.
 Follows `full-mac-backup.md` (released 2026-10-21, v2.118).
 
 ## Define
