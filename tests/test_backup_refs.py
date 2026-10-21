@@ -71,6 +71,7 @@ def run(root: Path, config_text: str, *extra: str, gitleaks: str = "/usr/bin/tru
         "AUTOSYNC_BACKUP_ALLOW_LOCAL": "1",
         "AUTOSYNC_ALLOWED_EMAILS": "t@example.com 243015673+wwds-dev@users.noreply.github.com",
         "AUTOSYNC_IGNORE_DIR": str(root / "state" / "gitleaksignore"),
+        "AUTOSYNC_LOCK": str(root / "state" / "run.lock"),
         **env_extra,
     }
     result = subprocess.run(["bash", str(ENGINE), *extra], capture_output=True,
@@ -877,7 +878,7 @@ class TestOneRunAtATime:
         lock.mkdir(parents=True)
         (lock / "pid").write_text(f"{os.getpid()}\n")   # alive: this test process
         (repo / "w.txt").write_text("w\n")
-        result = run(root, "proj  push-only\n")
+        result = run(root, "proj  push-only\n", "--backup-only")
         assert "another git_autosync run is in progress" in result.stdout
         assert result.returncode == 0 and backup_refs(backup) == {}
         assert lock.exists(), "a run that did not take the lock must not remove it"
@@ -891,3 +892,56 @@ class TestOneRunAtATime:
         assert "taking over a stale run lock" in result.stdout
         assert f"{PREFIX}/heads/main" in backup_refs(backup)
         assert not lock.exists(), "the lock is released at the end of the run"
+
+
+@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
+class TestTheManifestGate:
+    def test_a_checkouts_allowlist_cannot_clear_the_manifest_scan(self, ws):
+        root, repo, backup = ws
+        (repo / ".gitleaksignore").write_text("autosync_repos.txt:github-pat:1\n")
+        result = run(root, f"# {_token()}\nproj  push-only\n", gitleaks=GITLEAKS)
+        assert "manifest: NOT pushed" in result.stdout, result.stdout[-1500:]
+        assert "refs/backup-meta/manifest" not in git(backup, "for-each-ref")
+
+
+class TestTheLockWhileStarting:
+    def test_a_lock_without_a_pid_yet_is_not_taken_over(self, ws):
+        root, repo, backup = ws
+        (root / "state" / "run.lock").mkdir(parents=True)
+        result = run(root, "proj  push-only\n", "--backup-only")
+        assert "another git_autosync run is in progress (pid starting)" in result.stdout
+        assert backup_refs(backup) == {}
+
+    def test_a_full_run_waits_for_the_lock_instead_of_skipping_the_night(self, ws):
+        """The 03:30 sync must not be lost to an hourly backup that is running."""
+        root, repo, backup = ws
+        lock = root / "state" / "run.lock"
+        lock.mkdir(parents=True)
+        holder = subprocess.Popen(["sleep", "3"])
+        (lock / "pid").write_text(f"{holder.pid}\n")
+        subprocess.Popen(["bash", "-c", f"sleep 2; rm -rf '{lock}'"])
+        result = run(root, "proj  push-only\n", AUTOSYNC_LOCK_WAIT="20")
+        holder.wait()
+        assert "waiting for another git_autosync run" in result.stdout
+        assert f"{PREFIX}/heads/main" in backup_refs(backup), result.stdout[-1500:]
+
+    def test_a_full_run_gives_up_loudly_after_the_wait(self, ws):
+        root, repo, backup = ws
+        lock = root / "state" / "run.lock"
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text(f"{os.getpid()}\n")
+        result = run(root, "proj  push-only\n", AUTOSYNC_LOCK_WAIT="2")
+        assert result.returncode != 0 and "held the lock" in result.stdout
+
+
+class TestUnbornBranch:
+    def test_a_repo_with_no_commits_yet_is_backed_up(self, tmp_path):
+        """Review P2-4: the unborn HEAD (0000…) made every run a scanner error."""
+        backup = tmp_path / "backup.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(backup)], check=True)
+        repo = _init(tmp_path / "active" / "fresh")
+        (repo / "first.py").write_text("x = 1\n")
+        result = run(tmp_path, "fresh  push-only\n")
+        assert "scanner error" not in result.stdout, result.stdout[-1500:]
+        snap = backup_refs(backup)["refs/backup/fresh/wip/main"]
+        assert "first.py" in git(backup, "ls-tree", "-r", "--name-only", snap)

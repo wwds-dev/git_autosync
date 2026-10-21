@@ -40,10 +40,11 @@ def _init(path: Path, origin: Path | None) -> Path:
 
 
 def _env(root: Path, home: Path, **extra) -> dict:
-    return {**os.environ, "HOME": str(home), "LAB_ACTIVE": str(home / "active"),
+    return {**os.environ, "HOME": str(home), "LAB_ACTIVE": str(home / "Documents" / "lab" / "active"),
             "AUTOSYNC_CONFIG": str(root / "repos.txt"),
             "AUTOSYNC_LOG_DIR": str(root / "logs"), "AUTOSYNC_STATE_DIR": str(root / "state"),
             "AUTOSYNC_IGNORE_DIR": str(root / "ignore"),
+            "AUTOSYNC_LOCK": str(root / "state" / "run.lock"),
             "AUTOSYNC_BACKUP_REMOTE": str(root / "backup.git"), "AUTOSYNC_BACKUP_ALLOW_LOCAL": "1",
             "AUTOSYNC_ALLOWED_EMAILS": f"{EMAIL} 243015673+wwds-dev@users.noreply.github.com",
             "AUTOSYNC_SCAN_ROOTS": "", "GITLEAKS_CMD": "/usr/bin/true",
@@ -56,7 +57,7 @@ def mac(tmp_path):
     stash, a nested repo and one with no origin."""
     home = tmp_path / "home1"
     subprocess.run(["git", "init", "--bare", "-q", str(tmp_path / "backup.git")], check=True)
-    proj = _init(home / "active" / "proj", tmp_path / "proj.git")
+    proj = _init(home / "Documents" / "lab" / "active" / "proj", tmp_path / "proj.git")
     git(proj, "checkout", "-qb", "feature/local-only")
     (proj / "f.py").write_text("feature\n")
     git(proj, "add", "f.py")
@@ -65,12 +66,12 @@ def mac(tmp_path):
     git(proj, "stash", "push", "-q", "-u", "-m", "parked")
     (proj / "README.md").write_text("edited, not committed\n")
     (proj / "new_untracked.txt").write_text("untracked\n")
-    wt = home / "elsewhere" / "wt1"
+    wt = home / "Documents" / "elsewhere" / "wt1"
     git(proj, "worktree", "add", "-q", "--detach", str(wt), "main")
     (wt / "in_worktree.txt").write_text("worktree work\n")
-    nested = _init(home / "active" / "proj" / "sub", tmp_path / "sub.git")
+    nested = _init(home / "Documents" / "lab" / "active" / "proj" / "sub", tmp_path / "sub.git")
     (proj / ".gitignore").write_text("sub/\n")
-    _init(home / "active" / "local", None)   # no origin at all
+    _init(home / "Documents" / "lab" / "active" / "local", None)   # no origin at all
     (tmp_path / "repos.txt").write_text("proj  push-only\nproj/sub\nlocal  push-only\n")
     r = subprocess.run(["bash", str(ENGINE)], capture_output=True, text=True,
                        env=_env(tmp_path, home))
@@ -88,7 +89,7 @@ def test_a_lost_mac_comes_back_in_an_empty_home(mac):
     new_home = root / "home2"
     r = _restore(root, new_home)
     assert r.returncode == 0, r.stdout + r.stderr
-    p = new_home / "active" / "proj"
+    p = new_home / "Documents" / "lab" / "active" / "proj"
     # every branch at its backed-up commit
     assert git(p, "rev-parse", "feature/local-only") == git(proj, "rev-parse", "feature/local-only")
     assert git(p, "rev-parse", "main") == git(proj, "rev-parse", "main")
@@ -107,8 +108,8 @@ def test_a_lost_mac_comes_back_in_an_empty_home(mac):
     # nothing of the backup's layout is left behind
     assert git(p, "for-each-ref", "refs/restore/") == ""
     # the nested repo inside its parent, and the one with no origin
-    assert git(new_home / "active" / "proj" / "sub", "rev-parse", "HEAD") == git(nested, "rev-parse", "HEAD")
-    assert (new_home / "active" / "local" / "README.md").exists()
+    assert git(new_home / "Documents" / "lab" / "active" / "proj" / "sub", "rev-parse", "HEAD") == git(nested, "rev-parse", "HEAD")
+    assert (new_home / "Documents" / "lab" / "active" / "local" / "README.md").exists()
     # git_autosync's own state
     assert (new_home / "support" / "autosync_repos.txt").read_text() == (root / "repos.txt").read_text()
     assert "restored=3 skipped=0 failed=0" in r.stdout
@@ -117,7 +118,7 @@ def test_a_lost_mac_comes_back_in_an_empty_home(mac):
 def test_it_never_writes_into_a_folder_that_has_files(mac):
     root, home, proj, nested = mac
     new_home = root / "home2"
-    keep = new_home / "active" / "proj" / "mine.txt"
+    keep = new_home / "Documents" / "lab" / "active" / "proj" / "mine.txt"
     keep.parent.mkdir(parents=True)
     keep.write_text("do not touch\n")
     r = _restore(root, new_home)
@@ -142,3 +143,51 @@ def test_the_manifest_carries_no_credentials_from_a_remote_url(mac):
     assert r.returncode in (0, 1)
     tsv = git(root / "backup.git", "show", "refs/backup-meta/manifest:manifest.tsv")
     assert "ghp_abc123" not in tsv and "https://github.com/x/proj.git" in tsv
+
+
+def _craft_manifest(root: Path, line: str) -> None:
+    """Replace the backup's manifest with one holding a single crafted line."""
+    work = root / "craft"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    (work / "manifest.tsv").write_text(line + "\n")
+    (work / "autosync_repos.txt").write_text("x\n")
+    for k, v in (("user.name", "T"), ("user.email", EMAIL), ("commit.gpgsign", "false")):
+        git(work, "config", k, v)
+    git(work, "add", "-A")
+    git(work, "commit", "-qm", "crafted")
+    git(work, "push", "-q", "-f", str(root / "backup.git"), "HEAD:refs/backup-meta/manifest")
+
+
+@pytest.mark.parametrize("path,url", [
+    ("~/Documents/lab/active/../../../Library/LaunchAgents", "-"),
+    ("/tmp/elsewhere", "-"),
+    ("~/Documents/lab/active/x", "--upload-pack=touch /tmp/pwned"),
+    ("~/Documents/lab/active/x", "https://evil.example/x.git"),
+])
+def test_a_crafted_manifest_cannot_send_restore_elsewhere(mac, path, url):
+    root, home, proj, nested = mac
+    _craft_manifest(root, f"repo\tx\tpush-only\t{path}\t{url}\tmain")
+    new_home = root / "home2"
+    r = _restore(root, new_home)
+    assert "FAIL  x  (refused" in r.stdout, r.stdout
+    assert not (new_home / "Library").exists()
+    assert not Path("/tmp/elsewhere").exists() and not Path("/tmp/pwned").exists()
+
+
+def test_a_clean_detached_head_comes_back_on_that_commit(tmp_path):
+    """Review P2-1: a clean worktree's wip ref *is* HEAD, not a snapshot on it."""
+    home = tmp_path / "home1"
+    subprocess.run(["git", "init", "--bare", "-q", str(tmp_path / "backup.git")], check=True)
+    proj = _init(home / "Documents" / "lab" / "active" / "proj", tmp_path / "proj.git")
+    (proj / "b.txt").write_text("b\n")
+    git(proj, "add", "b.txt")
+    git(proj, "commit", "-qm", "second")
+    head = git(proj, "rev-parse", "HEAD")
+    git(proj, "checkout", "-q", "--detach", "HEAD")
+    (tmp_path / "repos.txt").write_text("proj  push-only\n")
+    subprocess.run(["bash", str(ENGINE)], capture_output=True, text=True, env=_env(tmp_path, home))
+    r = _restore(tmp_path, tmp_path / "home2")
+    p = tmp_path / "home2" / "Documents" / "lab" / "active" / "proj"
+    assert r.returncode == 0, r.stdout
+    assert git(p, "rev-parse", "HEAD") == head
+    assert git(p, "status", "--porcelain") == ""

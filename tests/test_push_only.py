@@ -66,6 +66,7 @@ def run_engine(root: Path, config_text: str, *extra: str):
         "AUTOSYNC_BACKUP_REMOTE": "",
         "AUTOSYNC_SCAN_ROOTS": "",
         "AUTOSYNC_IGNORE_DIR": str(root / "ignore"),
+        "AUTOSYNC_LOCK": str(root / "state" / "run.lock"),
     }
     return subprocess.run(["bash", str(ENGINE), *extra],
                           capture_output=True, text=True, env=env)

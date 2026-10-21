@@ -59,6 +59,21 @@ ref_key(){
 }
 expand(){ case "$1" in "~"*) printf '%s' "$HOME${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
 
+# The manifest comes from the backup repo, and this runs on a new Mac with
+# nothing else to check it: only a path under ~/Documents with no `..`, only
+# a GitHub https URL (or none), only valid branch names (security review).
+safe_path(){
+  case "$1" in "~/Documents/"*) ;; *) return 1 ;; esac
+  case "/$1/" in */../*|*/./*) return 1 ;; esac
+  return 0
+}
+safe_url(){
+  [ -z "$1" ] && return 0
+  # A local bare repo stands in for GitHub in the tests; never otherwise.
+  [ "${AUTOSYNC_BACKUP_ALLOW_LOCAL:-0}" = "1" ] && case "$1" in /*) [ -d "$1" ] && return 0 ;; esac
+  printf '%s' "$1" | grep -Eq '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$'
+}
+
 # --- the manifest ----------------------------------------------------------
 META="$TMP/meta.git"
 git init -q --bare "$META"
@@ -101,6 +116,11 @@ restore_state(){
 restore_repo(){
   local entry="$1" dir url="$3" branch="$4" key ref sha b wip head n_br=0 n_extra=0
   dir="$(expand "$2")"; key="$(ref_key "$entry")"
+  if ! safe_path "$2"; then REPORT+=("FAIL  $entry  (refused path: $2)"); N_FAIL=$((N_FAIL+1)); return; fi
+  if ! safe_url "$url"; then REPORT+=("FAIL  $entry  (refused origin URL: $url)"); N_FAIL=$((N_FAIL+1)); return; fi
+  if [ -n "$branch" ] && ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+    REPORT+=("FAIL  $entry  (refused branch name)"); N_FAIL=$((N_FAIL+1)); return
+  fi
   if [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
     REPORT+=("SKIP  $entry  (already there: $2)"); N_SKIP=$((N_SKIP+1)); return
   fi
@@ -109,17 +129,19 @@ restore_repo(){
   fi
   mkdir -p "$(dirname "$dir")"
   if [ -n "$url" ]; then
-    git clone -q "$url" "$dir" 2>"$TMP/err" || { REPORT+=("FAIL  $entry  (clone failed: $(head -1 "$TMP/err"))"); N_FAIL=$((N_FAIL+1)); return; }
+    git clone -q -- "$url" "$dir" 2>"$TMP/err" || { REPORT+=("FAIL  $entry  (clone failed: $(head -1 "$TMP/err"))"); N_FAIL=$((N_FAIL+1)); return; }
   else
     git init -q "$dir"
   fi
   # Into a private namespace first, then out again: nothing of the backup's
   # layout is left in the restored repo.
   if ! git -C "$dir" fetch -q "$BACKUP_REMOTE" "+refs/backup/$key/*:refs/restore/*" 2>"$TMP/err"; then
-    REPORT+=("FAIL  $entry  (cloned, but its backup could not be fetched)"); N_FAIL=$((N_FAIL+1)); return
+    rm -rf "$dir"   # ours, just made: leave nothing that would block a retry
+    REPORT+=("FAIL  $entry  (its backup could not be fetched; nothing left behind, run again)"); N_FAIL=$((N_FAIL+1)); return
   fi
   while read -r sha ref; do
     b="${ref#refs/restore/heads/}"
+    git check-ref-format --branch "$b" >/dev/null 2>&1 || continue
     git -C "$dir" update-ref "refs/heads/$b" "$sha" && n_br=$((n_br+1))
     git -C "$dir" show-ref -q --verify "refs/remotes/origin/$b" \
       && git -C "$dir" branch -q --set-upstream-to="origin/$b" "$b" 2>/dev/null
@@ -128,16 +150,32 @@ restore_repo(){
   # The main worktree: the branch it was on, then its uncommitted work laid
   # over the files as uncommitted changes (a clone has no local changes, so
   # the forced checkout loses nothing).
+  # wip/main is either the worktree's HEAD (it was clean) or a snapshot
+  # commit on top of it, told apart by the engine's fixed message.
+  local snap="" base="" on="" rc=0
   wip="$(git -C "$dir" rev-parse -q --verify refs/restore/wip/main 2>/dev/null)"
-  if [ -n "$branch" ] && git -C "$dir" show-ref -q --verify "refs/heads/$branch"; then
-    git -C "$dir" checkout -q -f "$branch"
-  elif [ -n "$wip" ]; then
-    head="$(git -C "$dir" rev-parse -q --verify "$wip^" 2>/dev/null || echo "$wip")"
-    git -C "$dir" checkout -q -f --detach "$head"
+  if [ -n "$wip" ] && [ "$(git -C "$dir" log -1 --format=%s "$wip")" = "autosync backup: uncommitted work" ]; then
+    snap="$wip"; base="$(git -C "$dir" rev-parse -q --verify "$wip^" 2>/dev/null)"
+  else
+    base="$wip"
   fi
-  if [ -n "$wip" ] && [ "$wip" != "$(git -C "$dir" rev-parse -q --verify HEAD)" ]; then
-    git -C "$dir" restore --source="$wip" --worktree -- . 2>/dev/null \
-      || git -C "$dir" checkout "$wip" -- . 2>/dev/null
+  if [ -n "$branch" ] && git -C "$dir" show-ref -q --verify "refs/heads/$branch"; then
+    git -C "$dir" checkout -q -f "$branch" -- 2>"$TMP/err" || rc=1; on="$branch"
+  elif [ -n "$base" ]; then
+    git -C "$dir" checkout -q -f --detach "$base" 2>"$TMP/err" || rc=1; on="detached HEAD"
+  else
+    on="$(git -C "$dir" branch --show-current)"; on="${on:-unborn}"
+  fi
+  # Reset the index to whatever HEAD now is: update-ref may have moved the
+  # checked-out branch underneath it.
+  git -C "$dir" rev-parse -q --verify HEAD >/dev/null && git -C "$dir" reset -q 2>/dev/null
+  if [ -n "$snap" ] && [ "$rc" -eq 0 ]; then
+    git -C "$dir" restore --source="$snap" --worktree -- . 2>"$TMP/err" \
+      || git -C "$dir" checkout "$snap" -- . 2>"$TMP/err" || rc=1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    REPORT+=("FAIL  $entry  (cloned and branches made, but the work tree could not be put back: $(head -1 "$TMP/err"))")
+    N_FAIL=$((N_FAIL+1)); return
   fi
 
   # Other worktrees and stashes come back as branches (owner, 2026-10-21).
@@ -151,7 +189,7 @@ restore_repo(){
   done < <(git -C "$dir" for-each-ref --format='%(objectname) %(refname)' refs/restore/stash/)
 
   git -C "$dir" for-each-ref --format='delete %(refname)' refs/restore/ | git -C "$dir" update-ref --stdin
-  REPORT+=("OK    $entry  -> $2  ($n_br branch(es), $n_extra worktree/stash branch(es); on ${branch:-detached HEAD})")
+  REPORT+=("OK    $entry  -> $2  ($n_br branch(es), $n_extra worktree/stash branch(es); on $on${snap:+, uncommitted work back})")
   N_OK=$((N_OK+1))
 }
 
@@ -161,6 +199,9 @@ while IFS=$'\t' read -r kind entry mode path url branch; do
   [ "$kind" = "repo" ] || continue
   [ -n "$ONLY" ] && [ "$entry" != "$ONLY" ] && continue
   [ "$url" = "-" ] && url=""; [ "$branch" = "-" ] && branch=""
+  # ~/.ssh is not backed up, so a new Mac clones GitHub over https.
+  case "$url" in git@github.com:*) url="https://github.com/${url#git@github.com:}" ;;
+                 ssh://git@github.com/*) url="https://github.com/${url#ssh://git@github.com/}" ;; esac
   restore_repo "$entry" "$path" "$url" "$branch"
 done < <(awk -F'\t' '$1 == "repo" { print length($4) "\t" $0 }' "$TMP/manifest.tsv" | sort -n | cut -f2-)
 

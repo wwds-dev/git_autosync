@@ -71,20 +71,41 @@ log "=== git_autosync start (dry-run=$DRY_RUN backup-only=$BACKUP_ONLY) ==="
 # One run at a time: the hourly backup, the 03:30 sync and a run from the GUI
 # all walk the same repos, and a sweep stages into a real index. A lock left
 # by a run that died (its PID is gone, or it is over 2 hours old) is taken over.
-RUN_LOCK="$STATE_DIR/run.lock"
-mkdir -p "$STATE_DIR"
-if ! mkdir "$RUN_LOCK" 2>/dev/null; then
+# The lock is in one place whatever STATE_DIR is, so a run from the CLI and a
+# scheduled one see the same lock (review, restore-and-continue P2-2).
+RUN_LOCK="${AUTOSYNC_LOCK:-$HOME/Library/Application Support/git_autosync/run.lock}"
+mkdir -p "$STATE_DIR" "$(dirname "$RUN_LOCK")"
+# A full run waits for the lock (up to 10 minutes): the nightly sync must not
+# be lost because the hourly backup happened to be running. A backup-only run
+# gives up at once; the next hour tries again.
+lock_wait=0; LOCK_WAIT_MAX="${AUTOSYNC_LOCK_WAIT:-600}"
+while ! mkdir "$RUN_LOCK" 2>/dev/null; do
   lock_pid="$(cat "$RUN_LOCK/pid" 2>/dev/null)"
+  live=0
+  if [ -z "$lock_pid" ] && [ -z "$(find "$RUN_LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then live=1; fi
   if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null \
-     && [ -z "$(find "$RUN_LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
-    log "SKIPPED: another git_autosync run is in progress (pid $lock_pid) - nothing done"
-    exit 0
+     && [ -z "$(find "$RUN_LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then live=1; fi
+  if [ "$live" -eq 0 ]; then
+    log "  taking over a stale run lock (pid ${lock_pid:-unknown})"
+    rm -rf "$RUN_LOCK"; continue
   fi
-  log "  taking over a stale run lock (pid ${lock_pid:-unknown})"
-  rm -rf "$RUN_LOCK"; mkdir "$RUN_LOCK" || { log "ERROR: cannot take the run lock"; exit 1; }
-fi
-echo $$ > "$RUN_LOCK/pid"
-trap 'rm -rf "$RUN_LOCK"' EXIT   # widened below once the temp dir exists
+  if [ "$BACKUP_ONLY" -eq 1 ] || [ "$lock_wait" -ge "$LOCK_WAIT_MAX" ]; then
+    if [ "$BACKUP_ONLY" -eq 1 ]; then
+      log "SKIPPED: another git_autosync run is in progress (pid ${lock_pid:-starting}) - nothing done"
+      exit 0
+    fi
+    log "ERROR: another git_autosync run (pid ${lock_pid:-starting}) held the lock for $((LOCK_WAIT_MAX / 60)) minute(s) - nothing done"
+    exit 1
+  fi
+  [ "$lock_wait" -eq 0 ] && log "  waiting for another git_autosync run to finish (pid ${lock_pid:-starting})"
+  step=15; [ "$LOCK_WAIT_MAX" -lt 15 ] && step=1
+  sleep "$step"; lock_wait=$((lock_wait + step))
+done
+echo $$ > "$RUN_LOCK/pid.$$" && mv -f "$RUN_LOCK/pid.$$" "$RUN_LOCK/pid"   # atomic
+# Released only if it is still ours: a run that took over a stale lock at the
+# same moment must not have its lock removed by this one's exit.
+release_lock(){ [ "$(cat "$RUN_LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$RUN_LOCK"; return 0; }
+trap release_lock EXIT   # widened below once the temp dir exists
 
 # --- preflight -------------------------------------------------------------
 if ! command -v "$GITLEAKS" >/dev/null 2>&1; then
@@ -114,7 +135,7 @@ resolve_repo(){
 }
 
 BK_TMP="$(mktemp -d "${TMPDIR:-/tmp}/autosync_backup.XXXXXX")"
-trap 'rm -rf "$BK_TMP" "$RUN_LOCK"' EXIT
+trap 'rm -rf "$BK_TMP"; release_lock' EXIT
 
 # --- the gate ----------------------------------------------------------------
 # Run a gitleaks scan. Returns: 0 = clean, 1 = LEAK found, 2 = tool error.
@@ -228,7 +249,8 @@ HEAD_SCANNED=""
 capture_refs(){
   HEAD_SCANNED="$(git rev-parse -q --verify HEAD 2>/dev/null)"
   { git for-each-ref --format='%(objectname)'
-    git worktree list --porcelain 2>/dev/null | awk '/^HEAD /{print $2}'
+    # An unborn worktree reports HEAD 0000…; that is no commit to exclude.
+    git worktree list --porcelain 2>/dev/null | awk '/^HEAD / && $2 !~ /^0+$/ {print $2}'
   } | LC_ALL=C sort -u | paste -sd ' ' - > "$BK_TMP/scanned_refs"
 }
 
@@ -1099,7 +1121,8 @@ push_manifest(){
     dir="$(resolve_repo "$entry")"
     [ -e "$dir/.git" ] || continue
     # Credentials in a remote URL (https://user:token@host) never leave the Mac.
-    url="$(git -C "$dir" remote get-url origin 2>/dev/null | sed -E 's#^(https?://)[^/@]*@#\1#')"
+    url="$(git -C "$dir" remote get-url origin 2>/dev/null \
+           | sed -E -e 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@#\1#' -e 's#\?.*$##')"
     br="$(git -C "$dir" branch --show-current 2>/dev/null)"
     # "-" for an empty field: bash's read folds consecutive tabs into one.
     printf 'repo\t%s\t%s\t%s\t%s\t%s\n' "$entry" "$mode" "$(home_path "$dir")" "${url:--}" "${br:--}" >> "$mf"
@@ -1131,9 +1154,17 @@ push_manifest(){
   tree="$(git write-tree)"; c="$(bk_commit "$tree" "" "autosync backup: manifest")"
   unset GIT_DIR GIT_INDEX_FILE
   printf '[extend]\nuseDefault = true\n' > "$GL_CFG"
-  gl_run git --no-banner --redact --verbose --config "$GL_CFG" --log-opts="$c" "$meta"; rc=$?
+  # An empty allowlist, run from the temp dir: gitleaks reads ./.gitleaksignore
+  # from wherever it runs, and the cwd here is the last repo processed.
+  mkdir -p "$BK_TMP/no_ignore"; : > "$BK_TMP/no_ignore/.gitleaksignore"
+  ( cd "$BK_TMP" && gl_run git --no-banner --redact --verbose --config "$GL_CFG" \
+      -i "$BK_TMP/no_ignore" --log-opts="$c" "$meta" ); rc=$?
   if [ $rc -ne 0 ]; then
     log "  manifest: NOT pushed - the scan did not come back clean"; N_ERR=$((N_ERR+1)); return 1
+  fi
+  # A global url.*.insteadOf would send the manifest somewhere else.
+  if [ "$(git --git-dir="$meta" ls-remote --get-url "$BACKUP_REMOTE" 2>/dev/null)" != "$BACKUP_REMOTE" ]; then
+    log "  manifest: NOT pushed - git config rewrites the backup URL"; N_ERR=$((N_ERR+1)); return 1
   fi
   remote_sha="$(git ls-remote "$BACKUP_REMOTE" refs/backup-meta/manifest 2>/dev/null | awk '{print $1}')"
   if [ "$remote_sha" = "$c" ]; then log "  manifest: up to date."; return 0; fi

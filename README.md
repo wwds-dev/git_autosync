@@ -229,10 +229,16 @@ back:
 
 ```bash
 gh auth login && gh auth setup-git
-git clone https://github.com/wwds-dev/git_autosync.git ~/Documents/lab/active/git_autosync
-~/Documents/lab/active/git_autosync/restore.sh --dry-run
-~/Documents/lab/active/git_autosync/restore.sh
+git clone https://github.com/wwds-dev/git_autosync.git /tmp/restore-tool
+/tmp/restore-tool/restore.sh --dry-run
+/tmp/restore-tool/restore.sh
 ```
+
+Clone the tool somewhere temporary, not to its old path: `restore.sh` puts git_autosync
+back at `~/Documents/lab/active/git_autosync` like any other repo, with its own side branches
+and work in progress, and it skips a folder that already holds files. It only accepts paths
+under `~/Documents/` and GitHub https origins from the manifest (`git@github.com:` origins are
+cloned over https, since `~/.ssh` is not backed up).
 
 For each repo it clones origin to the old path (or `git init`s one with no origin), recreates
 every branch at its backed-up commit, checks out the branch it was on and lays the
@@ -262,7 +268,10 @@ same gate and backup push, plus the manifest, but nothing is staged or committed
 is pushed to any project's GitHub repo. It records `last_backup.txt`, never `last_sync.txt`, and
 turns the tray to attention only on a failure. Only one run of any kind runs at a time: a run
 that finds `run.lock` held by a live process exits at once; a lock whose process is gone, or
-over 2 hours old, is taken over.
+over 2 hours old, is taken over. A full run (the 03:30 sync, a GUI run) **waits** up to 10
+minutes for the lock rather than skipping the night; only a backup-only run gives up at once.
+The lock is always `~/Library/Application Support/git_autosync/run.lock`, whatever
+`AUTOSYNC_STATE_DIR` is, so a CLI run and a scheduled one cannot overlap.
 
 ## Publishing a new project to GitHub
 
