@@ -9,7 +9,11 @@
 ## v2 — current
 
 - [x] `P1` `feature` `@ai` **Lose the Mac, keep working** (`docs/specs/restore-and-continue.md`, approved 2026-10-21): `restore.sh` + manifest, hourly `--backup-only` agent, app data and configs in the Drive copy (`_Admin/backup/backup_paths.txt`, SQLite via `.backup`).
-- [ ] `P1` `security` `@me` **Item 4: secrets.** `.env` files and now app data (databases) sit unencrypted in Google Drive; `~/.ssh/id_rsa` and the gh token are backed up nowhere. Next spec.
+- [x] `P1` `security` `@me` **Item 4: secrets.** `.env` files and now app data (databases) sit unencrypted in Google Drive; `~/.ssh/id_rsa` and the gh token are backed up nowhere. Next spec. Built 2026-10-21 (`backup_manager/docs/specs/secrets-vault.md`, owner-approved): bundle to the Proton vault, `restore-secrets.sh` here, snapshots keep credential names out of `.git/objects`; SSH key and gh token deliberately not backed up. Owner steps below.
+- [ ] `P1` `security` `@me` **Finish the secrets-vault owner steps** in `backup_manager/TODO.md`: sign the vault's Proton account in, confirm one `latest.tar.gz` (`SECRETS: OK`), only then purge the Google copies and rotate the keys. Until then `restore-secrets.sh` has no bundle to restore.
+- [ ] `P2` `security` `@ai` **A sweep's `git add -A` still writes credential blobs into `.git/objects`** (`git_autosync.sh`, sweep staging before `bk_filter … sweep`); only snapshots got `CRED_PATHSPEC`. `.git` goes to Google Drive, so give the sweep the same pathspec.
+- [ ] `P2` `security` `@ai` **`CRED_PATHSPEC` is narrower than `bk_sensitive` and case-sensitive**: `.ssh/`, `.aws/`, `credentials*`, `env.*`, `*.crt`, `*.tfstate`, `id_dsa*`, `.ENV` still reach `.git/objects` via the snapshot add. Build both from one list, with `icase`.
+- [ ] `P3` `testing` `@ai` **`test_secrets.py` skips as a whole without the lab root's `backup_secrets.sh`**, so `restore-secrets.sh`'s own refusal tests (crafted bundle, links, login paths) skip too in a lone clone. Split them out.
 
 - [x] `P1` `feature` `@ai` **Back up everything on this Mac, not just the checked-out branch** (`docs/specs/full-mac-backup.md`, approved 2026-10-20). Branches, every worktree's uncommitted work and stashes go to `refs/backup/*` in private `wwds-dev/mac_backup`; rows say **Backed up** only when all of it is there; unlisted repos are flagged; sweep commits only on the default branch.
 - [x] `P1` `infra` `@ai` **Private `wwds-dev/mac_backup` repo created** 2026-10-20 (owner-approved), empty until the first real run of this build.
@@ -33,14 +37,14 @@
   bugreports.qt.io.
 
 - [ ] `P0` `security` `@me` **Rotate any credential that was ever committed.** Repos with secrets in history stay out of `autosync_repos.txt`; publishing one requires history cleanup first, and the credential should be rotated regardless of what GitHub sees.
-- [ ] `P1` `infra` `@me` **Coverage has fallen far behind the repo count.** The Sep 2026
+- [x] `P1` `infra` `@me` **Coverage has fallen far behind the repo count.** (Resolved by 2026-10-21: the live list ran 21 repos `BACKUP … ok` in the hourly drill, and the unlisted scan flags only the lab root and `shopfront`, the P2 above.) The Sep 2026
   reorg left 21 repos under `active/`; `autosync_repos.txt` lists 5. Uncovered:
   `lab_hub`, `imprint`, `imprint/vidforge`, `sentinel`, `sentinel/bug_spray`,
   `sonar`, `sonar/sonar/macro`, `sonar/sonar/playmaker`, `toolbox`,
   `toolbox/unblock_tracker`, `bazaar`, and the five `sentinel/agents/*` repos.
   Consequences already visible: **`imprint` is 30 commits ahead of its remote**,
   `sentinel/vpn_agent` 1, and `bug_spray` has uncommitted work.
-- [ ] `P1` `infra` `@me` **Nine repos have no remote at all**, so nothing is backing them
+- [x] `P1` `infra` `@me` **Nine repos have no remote at all**, (resolved by 2026-10-22: after the reorg `toolbox`, `sonar/sonar/macro`, `sonar/sonar/playmaker` and `sentinel/agents/bug_spray` have GitHub origins; the other paths are no longer repos; a listed repo without origin is still backed up to `mac_backup`) so nothing is backing them
   up but the nightly Drive rsync: `bazaar`, `sentinel/bug_spray`, `toolbox`,
   `sonar/sonar/macro`, `sonar/sonar/playmaker`, and the five `sentinel/agents/*`.
   A repo without a remote cannot be autosynced — `--create-remote` is the way in.
@@ -48,7 +52,7 @@
   *contains* three repos, and `sentinel/` contains three more. Decide whether the
   parent, the children, or both belong in `autosync_repos.txt`, and make sure the
   parent's `.gitignore` keeps `git add -A` from turning a child into an embedded gitlink.
-- [ ] `P1` `security` `@me` Confirm `gitleaks` is installed (`brew install gitleaks`) — without it the leak gate is a stub, and the whole safety argument for autosync rests on it
+- [x] `P1` `security` `@me` Confirm `gitleaks` is installed (`brew install gitleaks`) (confirmed: 8.30.1 used in the 2026-10-20 checks, and the fail-closed gate let the 2026-10-21 runs sync and back up) — without it the leak gate is a stub, and the whole safety argument for autosync rests on it
 - [x] `P1` `testing` `@ai` Assert the app fails closed when `gitleaks` is missing, rather than syncing unscanned
 - [x] `P2` `bug` `@ai` Repos with no `origin` should be skipped with a clear status, not treated as a failure
 - [x] `P2` `feature` `@ai` Surface the last-sync state file in the GUI — it exists on disk and nothing shows it

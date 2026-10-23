@@ -13,7 +13,10 @@ approval gates) is in `AGENTS.md`; specs, review reports and role playbooks live
 Tests live in `tests/`: the engine is driven against throwaway repos in
 `test_push_only.py`, `test_backup_refs.py` (backups, the snapshot gate, the
 sweep side-branch rule, unlisted repos, `--backup-only`, the run lock) and
-`test_restore.py` (a whole Mac backed up and restored into an empty home), summary parsing is in
+`test_restore.py` (a whole Mac backed up and restored into an empty home), `test_hourly_backup.py`
+(the hourly agent) and `test_secrets.py` (the secrets bundle and `restore-secrets.sh` against a fake
+home, crafted bundles included; the whole file skips when the lab root's
+`_Admin/backup/backup_secrets.sh` is not there), summary parsing is in
 `test_runner.py` and `test_backup_status.py`, and
 `test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
 to check header labels fit, rows are banded on screen, Pull buttons survive a list
@@ -164,6 +167,18 @@ file except images, audio, video and fonts, and files over 50 MB. A changed trac
 file in one of those groups goes back to its committed version. The row then says
 **Partial**, not **Backed up**, because the claim would not be true.
 
+**Credential files never reach `.git/objects` through a snapshot.** A worktree snapshot's
+`git add -A` excludes the commonest credential names by pathspec (`.env`, `.env.*`, `.env-*`,
+`.env_*`, `*.env`, `*.env.*`, `.envrc`, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`,
+`.git-credentials`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.der`, `id_rsa*`, `id_ed25519*`,
+`id_ecdsa*`, `*.kdbx`, `*.keychain`, `*.keychain-db`, lower case as written), instead of adding
+them and dropping them afterwards: the add writes each file's content into `.git/objects`, and
+`.git` goes to Google Drive with the daily copy. Files caught that way are not named in the log
+or counted as left out, so on their own they do not make the row **Partial**. The rest of the
+credential list (anything under `.ssh/` or `.aws/`, `*.crt`, …) is still dropped after the add
+and logged, and a sweep's own `git add -A` is not narrowed yet (both in `TODO.md`). The secrets
+themselves are backed up to an encrypted vault instead: see *Restoring secrets* below.
+
 **They go to one private repo, `github.com/wwds-dev/mac_backup`, never to
 `origin`** (`docs/adr/0001-backup-refs-in-private-repo.md`). A hidden ref is only
 hidden from GitHub's web UI; on a public repo anyone can fetch it.
@@ -251,11 +266,42 @@ first did. `--only <entry>` restores one repo; `--into <dir>` restores under `<d
 home (a drill: `restore.sh --only sentinel --into /tmp/drill` leaves the real repo alone). A file deleted in the snapshot but present at
 the branch tip stays: the restore adds and changes files, it does not delete them.
 
-**Order on a new Mac:** run `restore.sh` first, then take from the Google Drive copy only
-what git never had — `.env` files and other ignored files from `Backups/MacBook/Documents/`,
-and app data from `Backups/MacBook/Home/Library/Application Support/` (each database there is a
-consistent snapshot). Copying the Drive folders back first would fill the repo folders, and
-`restore.sh` would then skip them: the Drive copy is daily, the backup repo hourly.
+**Order on a new Mac:** run `restore.sh` first, then `restore-secrets.sh` with the vault's
+`latest.tar.gz` for `.env` files and app data (below), and take from the Google Drive copy
+(`Backups/MacBook/Documents/`) only the other ignored files git never had. Copying the Drive
+folders back first would fill the repo folders, and `restore.sh` would then skip them: the
+Drive copy is daily, the backup repo hourly. Until the vault's Proton account is signed in on
+this Mac and one bundle has been written (owner steps in `backup_manager/TODO.md`), the old
+Google copy under `Backups/MacBook/` is still the only copy of the `.env` files and app data.
+
+### Restoring secrets (`restore-secrets.sh`)
+
+`.env` files and app data (`~/Library/Application Support/…`, where Imprint keeps its API keys
+and each app its database) are not in git or the backup repo. The lab's daily backup
+(`_Admin/backup/backup_secrets.sh`, run by Backup Control Center) puts them in one bundle in the
+end-to-end encrypted Proton Drive vault, `Vault/Credentials-Recovery/Mac-secrets/latest.tar.gz`
+(plus the last seven dated bundles), with a `MANIFEST.tsv` of each file's path, size and SHA-256.
+Spec: `backup_manager/docs/specs/secrets-vault.md`.
+
+```bash
+./restore-secrets.sh <bundle.tar.gz> --dry-run             # one line per file, writes nothing
+./restore-secrets.sh <bundle.tar.gz>                       # restore under ~
+./restore-secrets.sh <bundle.tar.gz> --into /tmp/drill     # a drill: under that folder, not ~
+```
+
+Each file goes back to its recorded path, readable only by you (mode 600). A crafted or damaged
+bundle cannot write anywhere else:
+
+- The whole bundle is refused if it holds anything but `MANIFEST.tsv` and files under `home/`,
+  an absolute path, a `..`, or a symlink or other special entry.
+- A manifest path outside `~/Documents/` and `~/Library/Application Support/` is `REFUSED`, so
+  nothing that runs at login (`~/.zshrc`, LaunchAgents) can be written.
+- A file missing from the bundle, or whose SHA-256 does not match, is `CORRUPT` and not restored.
+- A file already there that is newer than the bundle's copy is `KEPT`, never overwritten.
+
+It ends with `restored=N kept=N failed=N` and exits non-zero if anything was refused, corrupt or
+failed. The SSH key and the gh token are deliberately not in the bundle: on a new Mac, run
+`gh auth login` and add a new SSH key to GitHub.
 
 Manually, for one repo: `git fetch https://github.com/wwds-dev/mac_backup.git
 '+refs/backup/<entry>/*:refs/backup/*'`, then branch from `refs/backup/heads/…` and
@@ -381,6 +427,9 @@ history anyone reads. Two limits worth knowing before adding a project:
 - Secrets in *uncommitted work* (any worktree, untracked files, stashes) → blocked
   before anything, backup included, is pushed.
 - gitleaks errors (can't run) → treated as failure, repo skipped — never a silent pass.
+- Credential files in a worktree → kept out of backup snapshots, and their content out of
+  `.git/objects`; they go to the encrypted vault, and `restore-secrets.sh` refuses a bundle that
+  would write outside `~/Documents/` or `~/Library/Application Support/`.
 - `--dry-run` makes zero changes to your repos or GitHub. (It does `git fetch origin`,
   which only updates your local copy of the remote's branches, and `git ls-remote`
   on the backup repo.) Before 2026-10-20 a push-only dry-run unstaged whatever you
