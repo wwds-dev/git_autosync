@@ -1,7 +1,6 @@
 # git_autosync
 
 
-![Screenshot](docs/screenshot.png)
 Leak-gated auto commit & push for your GitHub projects.
 
 This is its own project repo (`~/Documents/lab/active/git_autosync`). It holds the
