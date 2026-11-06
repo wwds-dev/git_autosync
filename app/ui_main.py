@@ -127,6 +127,21 @@ def _fit_message_box_buttons(box) -> None:
         button.setMinimumWidth(needed + 34)   # padding + a little breathing room
 
 
+def _batch_fix_one(config_path):
+    """The problems dialog's batch fixes. Runs on its worker thread, so it
+    does git and file work only; the window updates rows afterwards."""
+    def fix(action: str, name: str) -> tuple[bool, str]:
+        if action == "pull":
+            return diverged.fast_forward(paths.find_git() or "git",
+                                         paths.resolve_entry(name))
+        if action == "remove":
+            entries = config.read_repos(config_path)
+            config.write_repos(config_path, [e for e in entries if e != name])
+            return True, "removed from the list"
+        return False, f"'{action}' cannot run in a batch"
+    return fix
+
+
 def _git_dirty(git: str, path) -> bool:
     r = subprocess.run([git, "-C", str(path), "status", "--porcelain"],
                        capture_output=True, text=True)
@@ -672,7 +687,48 @@ class MainWindow(QMainWindow):
                                  summary.get("unlisted", []))
         if not advices:
             return
-        ProblemsDialog(self, advices, self._run_advice_action).exec()
+        ProblemsDialog(self, advices, self._run_advice_action,
+                       fix_one=_batch_fix_one(self.config_path),
+                       after_fixes=self._after_batch_fixes,
+                       sync_repos=self._sync_fixed_repos,
+                       busy=self.runner.is_running,
+                       resolved=self._advice_resolved).exec()
+
+    def _after_batch_fixes(self, results):
+        """UI side of a batch the problems dialog ran off-thread."""
+        lines, removed = [], False
+        for action, name, ok, message in results:
+            lines.append(f"{name}: {action} — {message}")
+            if ok and action == "pull":
+                self._mark_pulled(name)
+            removed |= ok and action == "remove"
+        if removed:
+            self._reload_repo_list()
+        self._append_output("Fixes:\n  " + "\n  ".join(lines) + "\n")
+
+    def _advice_resolved(self, action: str, name: str):
+        if action == "pull":
+            return name not in self._behind
+        if action == "remove":
+            return name not in config.read_repos(self.config_path)
+        return None
+
+    def _sync_fixed_repos(self, names: list[str]):
+        """Sync only what the problems dialog fixed, not every repo again."""
+        listed = set(config.read_repos(self.config_path))
+        repos = [n for n in names if n in listed and n in self._row_widgets]
+        if not repos:
+            return
+        if not paths.find_gitleaks():
+            QMessageBox.warning(self, "gitleaks missing",
+                                "Install gitleaks before running a real sync.")
+            return
+        if not _confirm_sync_dialog(self,
+                f"Commit and push changes for the {len(repos)} fixed repo(s) "
+                "(after leak-gate clears each one).",
+                self._diff_preview(repos=repos)):
+            return
+        self._run(dry_run=False, repos=repos)
 
     def _run_advice_action(self, action: str, name: str):
         handlers = {
@@ -762,25 +818,18 @@ class MainWindow(QMainWindow):
 
     def _pull_one(self, name: str) -> tuple[bool, str]:
         """fetch + pull --ff-only for one repo. Returns (succeeded, message)."""
-        git = paths.find_git() or "git"
-        path = paths.resolve_entry(name)
-        try:
-            subprocess.run([git, "-C", str(path), "fetch", "origin"],
-                           capture_output=True, text=True, timeout=120)
-            r = subprocess.run([git, "-C", str(path), "pull", "--ff-only"],
-                               capture_output=True, text=True, timeout=120)
-        except Exception as exc:
-            return False, f"{exc}"
-        if r.returncode == 0:
-            self._behind.discard(name)
-            row = self._row_widgets.get(name)
-            if row:
-                row.set_behind(False)
-                self._apply_time(row, name)
-            return True, "up to date"
-        ahead = subprocess.run([git, "-C", str(path), "rev-list", "--count", "@{u}..HEAD"],
-                               capture_output=True, text=True).stdout.strip() or "?"
-        return False, f"diverged ({ahead} local commit(s)) — needs git pull --rebase"
+        ok, message = diverged.fast_forward(paths.find_git() or "git",
+                                            paths.resolve_entry(name))
+        if ok:
+            self._mark_pulled(name)
+        return ok, message
+
+    def _mark_pulled(self, name: str):
+        self._behind.discard(name)
+        row = self._row_widgets.get(name)
+        if row:
+            row.set_behind(False)
+            self._apply_time(row, name)
 
     def _on_pull(self, name: str):
         """Fast-forward a repo that is behind, so the next sync can push.

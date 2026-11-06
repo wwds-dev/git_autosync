@@ -67,6 +67,23 @@ def divergence(git: str, path: Path) -> Divergence | None:
     return Divergence(ahead, behind, _count(git, path, "@{u}..HEAD", "--merges") or 0)
 
 
+def fast_forward(git: str, path: Path) -> tuple[bool, str]:
+    """fetch + pull --ff-only. Touches no widgets, so it can run off the UI
+    thread. Returns (succeeded, one-line message)."""
+    try:
+        _git(git, path, "fetch", "origin")
+        r = _git(git, path, "pull", "--ff-only")
+    except Exception as exc:
+        return False, f"{exc}"
+    if r.returncode == 0:
+        return True, "up to date"
+    ahead = _count(git, path, "@{u}..HEAD")
+    if ahead:
+        return False, f"diverged ({ahead} local commit(s)) — needs git pull --rebase"
+    lines = (r.stderr or r.stdout).strip().splitlines()
+    return False, lines[-1] if lines else "git refused the pull"
+
+
 def _stash_ref(git: str, path: Path) -> str:
     return _git(git, path, "rev-parse", "-q", "--verify", "refs/stash").stdout.strip()
 

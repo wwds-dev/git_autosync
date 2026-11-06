@@ -11,6 +11,10 @@ performs an action itself, so this module stays testable and side-effect free.
 """
 from dataclasses import dataclass
 
+# Fixes that need no further input from the user, so the dialog can run
+# several at once. The rest open a window of their own and run one at a time.
+BATCHABLE = frozenset({"pull", "remove"})
+
 
 @dataclass(frozen=True)
 class Advice:
@@ -19,6 +23,10 @@ class Advice:
     explanation: str
     action_label: str | None = None
     action: str | None = None        # "leak" | "pull" | "link" | "create_repo" | "remove" | None
+
+    @property
+    def batchable(self) -> bool:
+        return self.action in BATCHABLE
 
 
 def advise(name: str, status: str, detail: str) -> Advice | None:

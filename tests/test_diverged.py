@@ -241,3 +241,32 @@ def test_link_refuses_detached_head(tmp_path):
     mine = _unlinked(tmp_path)
     git(mine, "checkout", "-q", "--detach")
     assert not link_to_origin("git", mine).ok
+
+
+# ── fast_forward: the batch Pull in the problems dialog ───────────
+
+def test_fast_forward_catches_up_when_only_behind(diverged):
+    from app.diverged import fast_forward
+    mine, theirs = diverged
+    _commit(theirs, "theirs.txt", "t\n", "theirs")
+    git(theirs, "push", "-q")
+
+    ok, message = fast_forward("git", mine)
+
+    assert ok, message
+    assert git(mine, "rev-list", "--count", "HEAD..@{u}") == "0"
+
+
+def test_fast_forward_refuses_a_divergence_and_changes_nothing(diverged):
+    from app.diverged import fast_forward
+    mine, theirs = diverged
+    _commit(theirs, "theirs.txt", "t\n", "theirs")
+    git(theirs, "push", "-q")
+    _commit(mine, "mine.txt", "m\n", "mine")
+    before = _snapshot(mine)
+
+    ok, message = fast_forward("git", mine)
+
+    assert not ok
+    assert "diverged (1 local commit(s))" in message
+    assert _snapshot(mine) == before

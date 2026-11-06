@@ -631,8 +631,20 @@ up to three of those repos with their reason (`+N more` beyond that).
 After any run — dry-run or real — in which a repo was blocked, errored or
 skipped, a dialog titled *Some repos need attention* lists one card per repo,
 worst first (blocked, then errors, then skips): what happened, what it means,
-and where there is one, the button that fixes it. Clicking it closes the dialog
-and opens that fix for that repo only:
+and where there is one, the button that fixes it. The dialog stays open while
+you fix: each card shows its result (✓ or ✗ with git's reason), and the header
+counts what is left.
+
+Fixes that need no further input — **Pull** and **Remove from list** — have a
+checkbox, ticked by default. **Fix selected (N)** runs every ticked one in one
+confirmed step, in the background. A pull that has diverged is left alone and
+its button becomes **Resolve…**, which offers the rebase. Fixes that open a
+window of their own (**Fix leak…**, **Create GitHub Repo…**, **Link to origin**)
+keep a button per card; the dialog steps aside while they run and comes back.
+
+**Sync fixed repos (N)** then syncs only the repos fixed here (same
+confirmation as any sync), instead of rescanning every repo. Repos removed from
+the list are not synced. The buttons are:
 
 | Outcome | Button |
 |---|---|
