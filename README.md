@@ -531,6 +531,21 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     `⚠ Error` (amber) · `No changes` (grey). Hover the row, name or badge for the
     reason behind an error or block (e.g. "remote has 6 commit(s) you do not have -
     pull first").
+
+    **Synced vs. Backed up.** They are two different safety nets, and a row can have one
+    without the other:
+
+    | | Synced | Backed up |
+    |---|---|---|
+    | What happens | Your changes are **committed** in the project and **pushed** to its own GitHub repo | A copy of everything on this Mac (all branches, uncommitted and untracked work, other worktrees, stashes) is pushed to the private backup repo under hidden `refs/backup/…` refs |
+    | Touches the project's history | Yes — adds a commit to the branch | No — never commits, never changes your files or branches |
+    | Clears **Pending** (uncommitted changes) | Yes | No — the files are still uncommitted, just safely copied |
+    | Row shows | `✓ Synced` | `✓ Backed up` — nothing to sync, and everything is in the backup |
+
+    In short: **Synced** means the work is now part of the project on GitHub; **Backed up**
+    means a restore point exists. A repo that still says *Pending* after a backup is
+    protected, but not committed — run **Sync now** to commit it. Every run does both, so
+    the two normally appear together (see *Backing up everything on this Mac*).
   - **Dry-run** button — scans just this repo, never commits or pushes.
   - **Sync** button — syncs just this repo after the leak-gate clears it.
     Shows a diff preview of pending changes (with human-readable labels —
