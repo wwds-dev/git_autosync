@@ -58,7 +58,6 @@ TOOLTIPS = {
     "edit_btn":       "Open autosync_repos.txt in your default editor.",
     "create_repo_btn":"Create a new GitHub repo for a local project (scanned for secrets first).",
     "open_logs_btn":  "Reveal the log folder in Finder.",
-    "tooltips_btn":   "Toggle explanatory tooltips on all controls.",
     "docs_btn":       "Open the project README inside the app.",
     "schedule_btn":   "Configure a background launchd schedule so syncs run automatically.",
     "msg_field":      "Optional: set a custom commit message instead of the default timestamp one.",
@@ -217,7 +216,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._reload_repo_list()
         self._check_gitleaks()
-        self._apply_tooltips(False)
+        self._apply_tooltips()
         self._refresh_last_sync_label()
         self._setup_tray()
         self._setup_file_watcher()
@@ -344,11 +343,8 @@ class MainWindow(QMainWindow):
         self.open_logs_btn.clicked.connect(self._on_open_logs)
         self.docs_btn = QPushButton("Docs")
         self.docs_btn.clicked.connect(self._on_open_documentation)
-        self.tooltips_btn = QPushButton("Tooltips")
-        self.tooltips_btn.setCheckable(True)
-        self.tooltips_btn.toggled.connect(self._on_toggle_tooltips)
         for b in (self.create_repo_btn, self.schedule_btn,
-                  self.open_logs_btn, self.docs_btn, self.tooltips_btn):
+                  self.open_logs_btn, self.docs_btn):
             secondary_row.addWidget(b)
         secondary_row.addStretch(1)
 
@@ -496,7 +492,7 @@ class MainWindow(QMainWindow):
             if not paths.repo_exists(name):
                 row.set_missing(True)
             row.checkbox.toggled.connect(self._refresh_select_all_box)
-        self._apply_tooltips(self.tooltips_btn.isChecked())
+        self._apply_tooltips()
         self._refresh_drift_banner()
         self._refresh_select_all_box()
         QTimer.singleShot(0, self._align_header_to_rows)
@@ -1591,18 +1587,13 @@ class MainWindow(QMainWindow):
     def _on_open_logs(self):
         subprocess.run(["open", str(paths.user_log_dir())])
 
-    def _on_toggle_tooltips(self, enabled: bool):
-        self.tooltips_btn.setText("Tooltips: on" if enabled else "Tooltips")
-        self._apply_tooltips(enabled)
-
-    def _apply_tooltips(self, enabled: bool):
+    def _apply_tooltips(self, enabled: bool = True):
         pairs = [
             (self.dry_run_btn,    "dry_run_btn"),
             (self.sync_btn,       "sync_btn"),
             (self.edit_btn,       "edit_btn"),
             (self.create_repo_btn,"create_repo_btn"),
             (self.open_logs_btn,  "open_logs_btn"),
-            (self.tooltips_btn,   "tooltips_btn"),
             (self.docs_btn,       "docs_btn"),
             (self.schedule_btn,   "schedule_btn"),
             (self.msg_field,      "msg_field"),

@@ -33,7 +33,9 @@ triage text, and how `.gitleaksignore` fingerprints are split for display.
 repos, `test_leak_triage.py` the leak fixes against real gitleaks and git-filter-repo
 (skipping, not passing, when either is missing), `test_rescan.py` the **Find repos…**
 reconciliation, `test_repo_state.py` last-sync lookups, and `test_repo_url.py` the
-GitHub link after each repo name.
+GitHub link after each repo name, `test_problems_dialog.py` the batch fixes in the
+Problems dialog, `test_tooltip_contrast.py` that tooltips stay dark-on-light, and
+`test_documentation_dialog.py` the Docs viewer's search and contents.
 
 For every repo listed in `autosync_repos.txt`, the tool:
 
@@ -54,8 +56,7 @@ Install gitleaks (the scanner) — once:
 brew install gitleaks
 ```
 
-Your repos also need a GitHub `origin` remote already set (either via the
-`setup_github.command` script, or via this tool's own `--create-remote` flag /
+Your repos also need a GitHub `origin` remote already set (either with `gh repo create`, or via this tool's own `--create-remote` flag /
 the GUI's **Create GitHub repo...** button — see below). Repos without a remote
 are skipped during normal syncs.
 
@@ -599,10 +600,11 @@ the `AUTOSYNC_COMMIT_MSG` env var to the engine script.
   30 min / 1 h / 6 h / 12 h / 24 h) or "run daily at" a specific time. Shows the
   current schedule; lets you update or disable it.
 - **Logs** — reveals the log folder in Finder.
-- **Docs** — renders this README in an in-app viewer, with a "Last updated" badge
+- **Docs** — renders this README in an in-app viewer with a contents sidebar (click a
+  heading to jump) and a search box (⌘F: all matches highlighted, Enter / Shift+Enter
+  to step through them, Esc to clear), with a "Last updated" badge
   reading the README's own commit date (falling back to its file mtime for a
   frozen bundle with no `.git`), so a stale page is obvious rather than trusted.
-- **Tooltips** — toggles explanatory tooltips on every control.
 - **Edit list** — opens `autosync_repos.txt` in your default editor.
 - **Pull selected** — fast-forwards every ticked repo that the last run found behind its
   remote, after a confirmation listing them. Repos that are level are skipped, diverged

@@ -30,6 +30,11 @@ TIME_W  = 96   # fits the 'LAST COMMIT' heading; see tests/test_header_fit.py
 NAME_W  = 320  # the name column is fixed, so the actions sit just after it
                # instead of being flung to the far edge of a wide window
 BADGE_W = 88
+# Fixed action-button widths. They used to size to their text, so 'Private'
+# (wider than 'Public') pushed every button after it out of line with the rows
+# above and below. Publish takes the room Sync + Privacy would have.
+DRY_W, SYNC_W, PRIV_W, FIX_W = 80, 64, 104, 92
+PUBLISH_W = SYNC_W + ROW_SPACING + PRIV_W
 
 _TIME_STYLE  = "color:#6E6E73; font-size:11px;"
 _STALE_STYLE = "background:#FFF8E7; color:#92400E; border-radius:5px; padding:2px 7px; font-size:11px; font-weight:600;"
@@ -103,6 +108,7 @@ class RepoRow(QWidget):
 
         self.dry_run_btn = QPushButton("Dry-run")
         self.dry_run_btn.setProperty("class", "rowButton")
+        self.dry_run_btn.setFixedWidth(DRY_W)
         self.dry_run_btn.clicked.connect(lambda: on_dry_run(name))
         layout.addWidget(self.dry_run_btn)
 
@@ -111,17 +117,20 @@ class RepoRow(QWidget):
             self.privacy_btn = None
             self.publish_btn = QPushButton("Publish to GitHub…")
             self.publish_btn.setProperty("class", "rowButton")
+            self.publish_btn.setFixedWidth(PUBLISH_W)
             self.publish_btn.clicked.connect(lambda: on_publish(name))
             layout.addWidget(self.publish_btn)
         else:
             self.publish_btn = None
             self.sync_btn = QPushButton("Sync")
             self.sync_btn.setProperty("class", "rowButton")
+            self.sync_btn.setFixedWidth(SYNC_W)
             self.sync_btn.clicked.connect(lambda: on_sync(name))
             layout.addWidget(self.sync_btn)
 
             self.privacy_btn = QPushButton("Privacy…")
             self.privacy_btn.setProperty("class", "rowButton")
+            self.privacy_btn.setFixedWidth(PRIV_W)
             self.privacy_btn.clicked.connect(lambda: on_privacy(name))
             layout.addWidget(self.privacy_btn)
             self._privacy_known = False
@@ -130,6 +139,7 @@ class RepoRow(QWidget):
             self.ignore_btn = QPushButton("Fix leak…")
             self.ignore_btn.setProperty("class", "rowButton")
             self.ignore_btn.setToolTip("Explain why this repo is blocked and how to clear it: allowlist a false positive, remove a real secret from history, or manage the allowlist.")
+            self.ignore_btn.setFixedWidth(FIX_W)
             self.ignore_btn.clicked.connect(lambda: on_ignore(name))
             layout.addWidget(self.ignore_btn)
         else:
