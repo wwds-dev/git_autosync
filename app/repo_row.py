@@ -2,7 +2,8 @@
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget,
+    QCheckBox, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 _BADGE = {
@@ -22,19 +23,19 @@ _BADGE = {
     "MISSING":  ("#FFE5E3", "#C0392B", "⚠ Missing"),
 }
 # Column geometry, shared with the header row above the list so the two line
-# up. Changing a width here changes the header too.
-ROW_MARGINS = (8, 6, 10, 6)
-ROW_SPACING = 8
+# up. Changing a width here changes the header too. Every column is fixed-width
+# and the actions come last, so no button's text can push another out of line.
+ROW_MARGINS = (10, 7, 10, 7)
+ROW_SPACING = 10
 CHECK_W = 20
-TIME_W  = 96   # fits the 'LAST COMMIT' heading; see tests/test_header_fit.py
-NAME_W  = 320  # the name column is fixed, so the actions sit just after it
+NAME_W  = 340  # the name column is fixed, so the actions sit just after it
                # instead of being flung to the far edge of a wide window
-BADGE_W = 88
-# Fixed action-button widths. They used to size to their text, so 'Private'
-# (wider than 'Public') pushed every button after it out of line with the rows
-# above and below. Publish takes the room Sync + Privacy would have.
-DRY_W, SYNC_W, PRIV_W, FIX_W = 80, 64, 104, 92
-PUBLISH_W = SYNC_W + ROW_SPACING + PRIV_W
+VIS_W   = 76   # fits the VISIBILITY heading; Public / Private
+TIME_W  = 96   # fits the 'LAST COMMIT' heading; see tests/test_header_fit.py
+BADGE_W = 104
+SYNC_W  = 76   # Sync, or Publish… on a repo with no remote yet
+MENU_W  = 34   # the ⋯ menu: Dry-run, Privacy, Fix leak…
+ACTIONS_W = SYNC_W + ROW_SPACING + MENU_W
 
 _TIME_STYLE  = "color:#6E6E73; font-size:11px;"
 _STALE_STYLE = "background:#FFF8E7; color:#92400E; border-radius:5px; padding:2px 7px; font-size:11px; font-weight:600;"
@@ -42,6 +43,27 @@ _EMPTY_STYLE = "background:transparent;"
 
 
 _STRIPE_BG = "#EFEFF4"   # ~6% below white: visible as a band, still quiet
+
+
+class _ElidedLabel(QLabel):
+    """One line of muted text that ends in … instead of widening its column."""
+
+    def __init__(self):
+        super().__init__()
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def set_full_text(self, text: str):
+        self._full = text or ""
+        self._elide()
+
+    def _elide(self):
+        self.setText(self.fontMetrics().elidedText(
+            self._full, Qt.ElideRight, max(self.width(), 10)))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
 
 
 class RepoRow(QWidget):
@@ -78,15 +100,30 @@ class RepoRow(QWidget):
             self.remove_btn.clicked.connect(lambda: on_remove(name))
         layout.addWidget(self.remove_btn)
 
+        # Two lines: the name, and under it why the row has the status it has
+        # (what a dry-run would push, what is not backed up) — that used to
+        # live only in a tooltip.
+        name_col = QWidget()
+        name_col.setFixedWidth(NAME_W)
+        col = QVBoxLayout(name_col)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(1)
         self.label = QLabel()
         self.label.setObjectName("repoName")
         self.label.setTextFormat(Qt.RichText)
         self.label.setText(self._name_markup(name))
         self.label.setToolTip(name)
         self.label.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
-        self.label.setFixedWidth(NAME_W)
-        self.label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        layout.addWidget(self.label)
+        col.addWidget(self.label)
+        self.detail_label = _ElidedLabel()
+        self.detail_label.setStyleSheet("color:#6E6E73; font-size:11px; background:transparent;")
+        col.addWidget(self.detail_label)
+        layout.addWidget(name_col)
+
+        self.vis_label = QLabel("")
+        self.vis_label.setFixedWidth(VIS_W)
+        self.vis_label.setStyleSheet("color:#6E6E73; font-size:11px; background:transparent;")
+        layout.addWidget(self.vis_label)
 
         # Last-synced time (subtle, always shown when known)
         self.time_label = QLabel()
@@ -106,18 +143,12 @@ class RepoRow(QWidget):
         self.badge.setStyleSheet(_EMPTY_STYLE)
         layout.addWidget(self.badge)
 
-        self.dry_run_btn = QPushButton("Dry-run")
-        self.dry_run_btn.setProperty("class", "rowButton")
-        self.dry_run_btn.setFixedWidth(DRY_W)
-        self.dry_run_btn.clicked.connect(lambda: on_dry_run(name))
-        layout.addWidget(self.dry_run_btn)
-
+        # The one action people reach for. Everything else is in the ⋯ menu.
         if on_publish is not None:
             self.sync_btn    = None
-            self.privacy_btn = None
-            self.publish_btn = QPushButton("Publish to GitHub…")
+            self.publish_btn = QPushButton("Publish…")
             self.publish_btn.setProperty("class", "rowButton")
-            self.publish_btn.setFixedWidth(PUBLISH_W)
+            self.publish_btn.setFixedWidth(SYNC_W)
             self.publish_btn.clicked.connect(lambda: on_publish(name))
             layout.addWidget(self.publish_btn)
         else:
@@ -128,18 +159,34 @@ class RepoRow(QWidget):
             self.sync_btn.clicked.connect(lambda: on_sync(name))
             layout.addWidget(self.sync_btn)
 
-            self.privacy_btn = QPushButton("Privacy…")
-            self.privacy_btn.setProperty("class", "rowButton")
-            self.privacy_btn.setFixedWidth(PRIV_W)
-            self.privacy_btn.clicked.connect(lambda: on_privacy(name))
-            layout.addWidget(self.privacy_btn)
-            self._privacy_known = False
+        self.menu_btn = QPushButton("⋯")
+        self.menu_btn.setProperty("class", "rowButton")
+        self.menu_btn.setFixedWidth(MENU_W)
+        self.menu_btn.setToolTip("More: Dry-run, Privacy, Fix leak…")
+        self.menu_btn.setStyleSheet(
+            "QPushButton::menu-indicator { image: none; width: 0; }")
+        menu = QMenu(self.menu_btn)
+        self.dry_run_btn = menu.addAction("Dry-run")
+        self.dry_run_btn.triggered.connect(lambda: on_dry_run(name))
+        if on_privacy is not None:
+            self.privacy_btn = menu.addAction("Privacy…")
+            self.privacy_btn.triggered.connect(lambda: on_privacy(name))
+        else:
+            self.privacy_btn = None
+        self.ignore_menu_action = None
+        if on_ignore is not None:
+            self.ignore_menu_action = menu.addAction("Fix leak…")
+            self.ignore_menu_action.triggered.connect(lambda: on_ignore(name))
+        self.menu_btn.setMenu(menu)
+        layout.addWidget(self.menu_btn)
 
+        # The rest appear only when they matter, after the fixed columns, so
+        # showing one never moves another row's buttons.
         if on_ignore is not None:
             self.ignore_btn = QPushButton("Fix leak…")
             self.ignore_btn.setProperty("class", "rowButton")
             self.ignore_btn.setToolTip("Explain why this repo is blocked and how to clear it: allowlist a false positive, remove a real secret from history, or manage the allowlist.")
-            self.ignore_btn.setFixedWidth(FIX_W)
+            self.ignore_btn.setVisible(False)
             self.ignore_btn.clicked.connect(lambda: on_ignore(name))
             layout.addWidget(self.ignore_btn)
         else:
@@ -209,8 +256,8 @@ class RepoRow(QWidget):
             bg, fg, text = _BADGE[status]
             self.badge.setText(text)
             self.badge.setStyleSheet(
-                f"background:{bg}; color:{fg}; border-radius:5px;"
-                f" padding:2px 7px; font-size:11px; font-weight:600;"
+                f"background:{bg}; color:{fg}; border-radius:9px;"
+                f" padding:3px 8px; font-size:11px; font-weight:600;"
             )
         else:
             self.badge.setText("")
@@ -239,15 +286,18 @@ class RepoRow(QWidget):
             self.set_time(f"{days}d ago", stale=days >= 3)
 
     def set_visibility(self, is_private: bool | None):
-        """Update the Privacy button label to show current state."""
+        """Show Public / Private in its own column and in the menu entry."""
         if self.privacy_btn is None:
             return
         if is_private is None:
+            self.vis_label.setText("")
             self.privacy_btn.setText("Privacy…")
         elif is_private:
-            self.privacy_btn.setText("🔒 Private")
+            self.vis_label.setText("Private")
+            self.privacy_btn.setText("Make public…")
         else:
-            self.privacy_btn.setText("🌐 Public")
+            self.vis_label.setText("Public")
+            self.privacy_btn.setText("Make private…")
 
     def is_missing(self) -> bool:
         return self._missing
@@ -266,8 +316,9 @@ class RepoRow(QWidget):
     def set_detail(self, text: str | None):
         """Hover text explaining a status — why a sync errored or was blocked."""
         tip = text or ""
-        for w in (self, self.label, self.badge):
+        for w in (self, self.label, self.badge, self.detail_label):
             w.setToolTip(tip)
+        self.detail_label.set_full_text(tip)
 
     def set_missing(self, missing: bool):
         """Entry no longer resolves to a repo on disk — say so and disable it.
@@ -316,6 +367,7 @@ class RepoRow(QWidget):
         if self.allowlist_btn:
             self.allowlist_btn.setVisible(blocked)
         if self.ignore_btn:
+            self.ignore_btn.setVisible(blocked)
             if blocked:
                 self.ignore_btn.setStyleSheet(
                     "QPushButton { color:#C0392B; background:#FDEDEC;"
@@ -327,17 +379,15 @@ class RepoRow(QWidget):
                 self.ignore_btn.setStyleSheet("")
 
     def set_buttons_enabled(self, enabled: bool):
-        self.dry_run_btn.setEnabled(enabled)
+        self.menu_btn.setEnabled(enabled)
         if self.sync_btn:    self.sync_btn.setEnabled(enabled)
         if self.publish_btn: self.publish_btn.setEnabled(enabled)
-        if self.privacy_btn: self.privacy_btn.setEnabled(enabled)
         if self.ignore_btn:     self.ignore_btn.setEnabled(enabled)
         if self.remove_btn:     self.remove_btn.setEnabled(enabled or self._missing)
         if self.pull_btn:       self.pull_btn.setEnabled(enabled)
         if self.allowlist_btn:  self.allowlist_btn.setEnabled(enabled)
 
     def set_tooltips(self, enabled: bool):
-        self.dry_run_btn.setToolTip(f"Dry-run just {self.name}." if enabled else "")
         if self.sync_btn:
             self.sync_btn.setToolTip(
                 f"Sync just {self.name} (leak-gate must clear first)." if enabled else ""
@@ -346,7 +396,5 @@ class RepoRow(QWidget):
             self.publish_btn.setToolTip(
                 f"Create a GitHub repo for {self.name} and push (leak-gated)." if enabled else ""
             )
-        if self.privacy_btn:
-            self.privacy_btn.setToolTip(
-                f"Toggle {self.name} between public and private on GitHub." if enabled else ""
-            )
+        self.menu_btn.setToolTip(
+            f"More for {self.name}: Dry-run, Privacy, Fix leak…" if enabled else "")

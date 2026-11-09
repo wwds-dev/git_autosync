@@ -510,10 +510,12 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     rows' own boxes, instead of separate All/None buttons off to the side — checked when
     every repo is, unchecked when none is, and shown partial otherwise; clicking it
     checks or clears every row.
-  - The repo name first, followed by its containing folder path in muted text. A small
-    **↗** right after the name opens the repo's GitHub page (shown only when its
-    `origin` is on GitHub). Column
-    headers keep the checkbox, repository, last-commit, status, and action fields aligned.
+  - The repo name first, followed by its containing folder path in muted text, and under
+    it a second line saying *why* the row has its status (e.g. "would push 1 commit(s)",
+    "backup missing: 2 ref(s) not backed up yet"), cut off with … when long; hover for the
+    full text. A small **↗** right after the name opens the repo's GitHub page (shown
+    only when its `origin` is on GitHub). Column headers keep the checkbox, repository,
+    visibility (Public / Private), last-commit, status, and action fields aligned.
     The columns are fixed-width and the table packs to the left, so on a wide window the
     buttons stay next to their repo name instead of drifting to the far edge (the window's
     minimum width is 900px for that reason). Rows are banded in alternating shades.
@@ -546,20 +548,20 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     means a restore point exists. A repo that still says *Pending* after a backup is
     protected, but not committed — run **Sync now** to commit it. Every run does both, so
     the two normally appear together (see *Backing up everything on this Mac*).
-  - **Dry-run** button — scans just this repo, never commits or pushes.
   - **Sync** button — syncs just this repo after the leak-gate clears it.
     Shows a diff preview of pending changes (with human-readable labels —
     "modified", "new file", "untracked", etc.) before you confirm.
-  - **Publish to GitHub…** button (replaces Sync) for repos with no remote yet.
-  - **Privacy…** button — toggle the repo between public and private on GitHub
-    (`gh repo edit --visibility …`). Label shows the current state once fetched
-    (🔒 Private / 🌐 Public) — on each refresh, visibility for every repo is
-    looked up via `gh api repos/<owner>/<repo>` on a background timer so the
-    list stays responsive. Toggling updates the button label immediately
-    without waiting for the next refresh.
-  - **Fix leak…** button — appears on every row; turns red while the repo is
-    currently blocked, back to normal once it clears. Opens a dialog that
-    explains the block and where the finding is (see *Handling blocked repos*):
+  - **Publish…** button (replaces Sync) for repos with no remote yet.
+  - **⋯** menu, on every row, holds the less-used actions so the buttons stay in line:
+    - **Dry-run** — scans just this repo, never commits or pushes.
+    - **Make private… / Make public…** — toggle the repo's visibility on GitHub
+      (`gh repo edit --visibility …`). The Visibility column shows the current state
+      once fetched: on each refresh, visibility for every repo is looked up via
+      `gh api repos/<owner>/<repo>` on a background timer so the list stays responsive.
+      Toggling updates the column immediately without waiting for the next refresh.
+    - **Fix leak…** — also appears as a red button next to ⋯ while the repo is
+      currently blocked, and goes away once it clears. Opens a dialog that
+      explains the block and where the finding is (see *Handling blocked repos*):
     - **Allowlist (false positive)…**: allowlist with confirmation and Undo.
     - **Remove from history…** (not shown for uncommitted findings):
       `git-filter-repo` rewrite. Force-pushes only if the value was already on

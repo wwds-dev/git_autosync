@@ -547,12 +547,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.select_all_box)
 
         lay.addWidget(cell("Repository", repo_row.NAME_W))
+        lay.addWidget(cell("Visibility", repo_row.VIS_W))
         lay.addWidget(cell("Last commit", repo_row.TIME_W,
                            Qt.AlignRight | Qt.AlignVCenter))
         lay.addWidget(cell("Status", repo_row.BADGE_W, Qt.AlignCenter))
-        # Width is set from a real row once one exists — the button cluster's
-        # size depends on which buttons that row has.
-        self._header_actions = cell("Actions", 1, Qt.AlignLeft | Qt.AlignVCenter)
+        # Fixed: every row's Sync + ⋯ pair is exactly ACTIONS_W wide.
+        self._header_actions = cell("Actions", repo_row.ACTIONS_W,
+                                    Qt.AlignLeft | Qt.AlignVCenter)
         lay.addWidget(self._header_actions)
         lay.addStretch(1)
 
@@ -596,14 +597,6 @@ class MainWindow(QMainWindow):
         row = max(rows, key=lambda r: r.width())
         if row.width() <= 0:
             return
-        buttons = [b for b in (row.dry_run_btn, row.sync_btn, row.publish_btn,
-                               row.privacy_btn, row.ignore_btn) if b and b.isVisible()]
-        if not buttons:
-            return
-        left = min(b.x() for b in buttons)
-        right = max(b.x() + b.width() for b in buttons)
-        actions_w = max(1, right - left)
-        self._header_actions.setFixedWidth(actions_w)
         # The list has a frame and may show a scrollbar; match that inset so
         # the header's right edge lands where the rows' does.
         frame = self.repo_list.frameWidth()
