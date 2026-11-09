@@ -312,6 +312,18 @@ class MainWindow(QMainWindow):
         self.repo_list.setAlternatingRowColors(True)
         root.addWidget(self.repo_list, stretch=1)
 
+        # Always visible: the two green-ish badges look alike but mean different
+        # things, and "Pending" after a backup confused the owner.
+        self.status_legend = QLabel(
+            "<b>Synced</b> = committed and pushed to the project's own GitHub repo. "
+            "<b>Backed up</b> = a copy of everything on this Mac is in the private "
+            "backup repo; nothing is committed, so uncommitted files still show "
+            "<b>Pending</b> until you Sync.")
+        self.status_legend.setWordWrap(True)
+        self.status_legend.setStyleSheet(
+            "color:#6E6E73; font-size:11px; padding:2px 4px 0 4px;")
+        root.addWidget(self.status_legend)
+
         # ── Commit message ─────────────────────────────────────────
         self.msg_field = QLineEdit()
         self.msg_field.setPlaceholderText(
