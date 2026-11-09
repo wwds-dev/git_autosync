@@ -363,7 +363,7 @@ class MainWindow(QMainWindow):
         # Banding comes from the list, not the row widgets: an item widget sits
         # on the viewport and the item's background is drawn over it.
         self.repo_list.setAlternatingRowColors(True)
-        root.addWidget(self.repo_list, stretch=1)
+        root.addWidget(self.repo_list, stretch=4)
 
         # Always visible: the two green-ish badges look alike but mean different
         # things, and "Pending" after a backup confused the owner.
@@ -461,7 +461,7 @@ class MainWindow(QMainWindow):
         self.output_pane = QPlainTextEdit()
         self.output_pane.setReadOnly(True)
         self.output_pane.setMaximumBlockCount(5000)
-        self.output_pane.setMinimumHeight(120)
+        self.output_pane.setMinimumHeight(70)
         root.addWidget(self.output_pane, stretch=1)
 
         # ── Status bar ─────────────────────────────────────────────
