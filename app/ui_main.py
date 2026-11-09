@@ -162,28 +162,25 @@ def _format_git_status(raw: str) -> str:
 
 
 
-def _with_backup(status: str, detail: str, backup: dict | None) -> tuple[str, str]:
-    """Fold the repo's backup state into its row.
+def _github_state(status: str) -> str:
+    """The GitHub column: clean and up to date counts as synced."""
+    return "SYNCED" if status == "OK" else status
 
-    A row only says it is fine when everything on this Mac is in the backup
-    repo — branches, every worktree's uncommitted work, stashes. Blocked,
-    errored and skipped rows keep their own status: their problem comes first.
-    No BACKUP line (backups off, or an engine older than this) leaves the row
-    as the engine reported it.
-    """
-    if not backup or status not in ("OK", "SYNCED", "PENDING"):
-        return status, detail
+
+def _backup_state(backup: dict | None) -> str | None:
+    """The Backup column: the engine's BACKUP line, or None when it gave none
+    (backups off, or an engine older than this) — shown as a dash, never as a
+    claim of backup."""
+    return backup["state"] if backup else None
+
+
+def _with_backup(detail: str, backup: dict | None) -> str:
+    """Append the backup note to a row's explanation line."""
+    if not backup:
+        return detail
     note = f"backup {backup['state']}" + (f": {backup['detail']}" if backup["detail"] else "")
-    detail = f"{detail} · {note}" if detail else note
-    if backup["state"] == "failed":
-        return "NOBACKUP", detail
-    if backup["state"] == "missing":   # dry-run: there is something to back up
-        return "PENDING", detail
-    if backup["state"] == "partial":
-        return "PARTIAL", detail
-    if status == "SYNCED":
-        return "SYNCEDBACKED", detail   # both safety nets, said in one badge
-    return ("BACKEDUP" if status == "OK" else status), detail
+    return f"{detail} · {note}" if detail else note
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -191,10 +188,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"git_autosync {version.version_string()}")
         # The columns are fixed, so below this the actions clip rather than
         # reflow — the table needs ~870px plus margins.
-        self.setMinimumSize(900, 480)
+        self.setMinimumSize(1040, 480)
         # Sized to the table rather than the screen: the columns are fixed, so a
         # wider window only adds empty space to the right of the actions.
-        self.resize(1000, 660)
+        self.resize(1100, 660)
 
         self.config_path = paths.user_config_path()
         self.runner = AutosyncRunner(self)
@@ -290,6 +287,10 @@ class MainWindow(QMainWindow):
         repos_lbl = QLabel("Repositories")
         repos_lbl.setObjectName("sectionLabel")
         repos_header.addWidget(repos_lbl)
+        # The goal, at a glance: every project synced to GitHub *and* backed up.
+        self.fleet_label = QLabel("")
+        self.fleet_label.setStyleSheet("font-size:12px; padding-left:12px;")
+        repos_header.addWidget(self.fleet_label)
         repos_header.addStretch(1)
         self.rescan_btn = QPushButton("Find repos…")
         self.rescan_btn.setProperty("class", "rowButton")
@@ -317,11 +318,11 @@ class MainWindow(QMainWindow):
         # Always visible: the two green-ish badges look alike but mean different
         # things, and "Pending" after a backup confused the owner.
         self.status_legend = QLabel(
-            "<b>Synced</b> = committed and pushed to the project's own GitHub repo. "
-            "<b>Backed up</b> = a copy of everything on this Mac is in the private "
-            "backup repo; nothing is committed, so uncommitted files still show "
-            "<b>Pending</b> until you Sync. A repo can be both: "
-            "<b>Synced + backup</b>.")
+            "<b>GitHub</b>: <b>Synced</b> = committed and pushed to the project's "
+            "own repo; <b>Pending</b> = changes still waiting. "
+            "<b>Backup</b>: <b>Backed up</b> = a copy of everything on this Mac "
+            "(branches, worktrees, uncommitted files) is in the private backup "
+            "repo. A project needs both; a backup alone never commits anything.")
         self.status_legend.setWordWrap(True)
         self.status_legend.setStyleSheet(
             "color:#6E6E73; font-size:11px; padding:2px 4px 0 4px;")
@@ -510,9 +511,32 @@ class MainWindow(QMainWindow):
         self._apply_tooltips()
         self._refresh_drift_banner()
         self._refresh_select_all_box()
+        self._refresh_fleet()
         QTimer.singleShot(0, self._align_header_to_rows)
         # Fetch GitHub visibility for each repo in the background (non-blocking)
         QTimer.singleShot(0, self._fetch_all_visibility)
+
+    def _refresh_fleet(self):
+        """One line saying whether every project is synced and backed up."""
+        rows = [r for r in self._row_widgets.values() if not r.is_missing()]
+        if not rows:
+            self.fleet_label.setText("")
+            return
+        n = len(rows)
+        synced = sum(1 for r in rows if r.is_synced())
+        backed = sum(1 for r in rows if r.is_backed_up())
+        known = any(r._status for r in rows) or any(r._backup for r in rows)
+        if not known:
+            text, color = "Run Dry-run to check sync and backup status", "#6E6E73"
+        elif synced == n and backed == n:
+            text, color = f"✓ All {n} projects are synced and backed up", "#1A7A3A"
+        else:
+            text = (f"{synced} of {n} synced to GitHub · "
+                    f"{backed} of {n} backed up")
+            color = "#B45309"
+        self.fleet_label.setText(text)
+        self.fleet_label.setStyleSheet(
+            f"font-size:12px; font-weight:600; padding-left:12px; color:{color};")
 
     def _fetch_all_visibility(self):
         gh = paths.find_gh()
@@ -565,7 +589,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(cell("Visibility", repo_row.VIS_W))
         lay.addWidget(cell("Last commit", repo_row.TIME_W,
                            Qt.AlignRight | Qt.AlignVCenter))
-        lay.addWidget(cell("Status", repo_row.BADGE_W, Qt.AlignCenter))
+        lay.addWidget(cell("GitHub", repo_row.BADGE_W, Qt.AlignCenter))
+        lay.addWidget(cell("Backup", repo_row.BADGE_W, Qt.AlignCenter))
         # Fixed: every row's Sync + ⋯ pair is exactly ACTIONS_W wide.
         self._header_actions = cell("Actions", repo_row.ACTIONS_W,
                                     Qt.AlignLeft | Qt.AlignVCenter)
@@ -864,6 +889,7 @@ class MainWindow(QMainWindow):
             if row:
                 row.set_behind(False)
                 row.set_status("SYNCED")
+                self._refresh_fleet()
                 self._apply_time(row, name)
             return
 
@@ -1239,9 +1265,10 @@ class MainWindow(QMainWindow):
                 if status == "OK" and ("would sync" in detail
                                        or "would push" in detail):
                     status = "PENDING"
-                status, detail = _with_backup(status, detail,
-                                              summary.get("backup", {}).get(name))
-                row.set_status(status)
+                bk = summary.get("backup", {}).get(name)
+                detail = _with_backup(detail, bk)
+                row.set_status(_github_state(status))
+                row.set_backup(_backup_state(bk))
                 row.set_blocked(info["status"] == "BLOCKED")
                 row.set_detail(detail or None)
                 if "pull first" in detail or "behind remote" in detail:
@@ -1251,6 +1278,7 @@ class MainWindow(QMainWindow):
                 row.set_behind(name in self._behind)
             if not row.is_missing():
                 self._apply_time(row, name)
+        self._refresh_fleet()
 
         # Leak report in output pane
         blocked = {n: f for n, f in self._last_findings.items()

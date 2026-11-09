@@ -518,7 +518,7 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     visibility (Public / Private), last-commit, status, and action fields aligned.
     The columns are fixed-width and the table packs to the left, so on a wide window the
     buttons stay next to their repo name instead of drifting to the far edge (the window's
-    minimum width is 900px for that reason). Rows are banded in alternating shades.
+    minimum width is 1040px for that reason). Rows are banded in alternating shades.
   - A row for a repo whose folder can no longer be found on disk goes grey and disabled
     except for a **Remove** button, which drops just that entry from
     `autosync_repos.txt` — no files and no GitHub repo are touched.
@@ -528,31 +528,38 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     stale just because git_autosync itself hasn't pushed it. Shown as an amber
     "no commits" pill only when the repo has no commits at all. Hover the time
     for the exact commit timestamp plus when git_autosync itself last pushed.
-  - A colored **status badge** after each run:
-    `✓ Synced + backup` / `✓ Synced` (green) · `✕ Blocked` (red) · `⊘ Skipped` (grey) ·
-    `⚠ Error` (amber) · `No changes` (grey). Hover the row, name or badge for the
+  - Two colored badges after each run — a project needs **both** to be fine:
+    - **GitHub**: `✓ Synced` (green, committed and pushed, nothing waiting) · `● Pending`
+      (changes still to commit or push) · `✕ Blocked` (red) · `⊘ Skipped` (grey) ·
+      `⚠ Error` (amber). A dash means no run has reported on it yet.
+    - **Backup**: `✓ Backed up` (everything on this Mac is in the private backup repo) ·
+      `⚠ Partial` (some files left out, see the row's second line) · `● Not yet`
+      (a dry-run found something not yet backed up) · `⚠ Failed` (the backup push failed).
+
+    Above the list, a line states the goal: **✓ All N projects are synced and backed up**,
+    or in amber **X of N synced to GitHub · Y of N backed up**.
+    Hover the row, name or badge for the
     reason behind an error or block (e.g. "remote has 6 commit(s) you do not have -
     pull first").
 
-    **Synced vs. Backed up.** They are two different safety nets, and a row can have one
-    without the other:
+    **Synced vs. Backed up.** Two different safety nets; a project needs both and either
+    can be fine while the other is not:
 
-    | | Synced | Backed up |
+    | | GitHub: Synced | Backup: Backed up |
     |---|---|---|
     | What happens | Your changes are **committed** in the project and **pushed** to its own GitHub repo | A copy of everything on this Mac (all branches, uncommitted and untracked work, other worktrees, stashes) is pushed to the private backup repo under hidden `refs/backup/…` refs |
     | Touches the project's history | Yes — adds a commit to the branch | No — never commits, never changes your files or branches |
     | Clears **Pending** (uncommitted changes) | Yes | No — the files are still uncommitted, just safely copied |
-    | Row shows | `✓ Synced` | `✓ Backed up` — nothing to sync, and everything is in the backup |
 
-    A repo can be both, and then says **Synced + backup**. In short: **Synced** means the work is now part of the project on GitHub; **Backed up**
-    means a restore point exists. A repo that still says *Pending* after a backup is
-    protected, but not committed — run **Sync now** to commit it. Every run does both, so
-    the two normally appear together (see *Backing up everything on this Mac*).
+    Every real run does both, so after a clean **Sync now** both badges are green.
+    A repo that still says *Pending* after a backup is protected, but not committed — run
+    **Sync now** to commit it (see *Backing up everything on this Mac*).
   - **Sync** button — syncs just this repo after the leak-gate clears it.
     Shows a diff preview of pending changes (with human-readable labels —
     "modified", "new file", "untracked", etc.) before you confirm.
   - **Publish…** button (replaces Sync) for repos with no remote yet.
-  - **⋯** menu, on every row, holds the less-used actions so the buttons stay in line:
+  - **⋯** menu, on every row, holds the less-used actions so the buttons stay in line
+    (**Pull…** and **Allowlist (false positive)…** appear in it only when they apply):
     - **Dry-run** — scans just this repo, never commits or pushes.
     - **Make private… / Make public…** — toggle the repo's visibility on GitHub
       (`gh repo edit --visibility …`). The Visibility column shows the current state
@@ -560,7 +567,8 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
       `gh api repos/<owner>/<repo>` on a background timer so the list stays responsive.
       Toggling updates the column immediately without waiting for the next refresh.
     - **Fix leak…** — also appears as a red button next to ⋯ while the repo is
-      currently blocked, and goes away once it clears. Opens a dialog that
+      currently blocked, and goes away once it clears. When a repo is behind its remote,
+      **Pull** takes the same slot (Fix leak… wins if both apply; Pull stays in ⋯). Opens a dialog that
       explains the block and where the finding is (see *Handling blocked repos*):
     - **Allowlist (false positive)…**: allowlist with confirmation and Undo.
     - **Remove from history…** (not shown for uncommitted findings):
@@ -570,7 +578,7 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
       git_autosync's allowlist entries for the repo, with removal.
     Dialog buttons are sized to their labels, so long labels are no longer
     clipped by macOS's fixed-width message-box buttons.
-  - **Pull** button (amber) — appears only when a run reported the repo is behind its
+  - **Pull** (amber button, and in ⋯) — appears only when a run reported the repo is behind its
     remote. Fetches and fast-forwards (`git pull --ff-only`); never discards local work.
     If the repo has diverged, a *Cannot fast-forward* dialog says how many commits each
     side has and changes nothing; git's output and the manual `git pull --rebase` are
@@ -581,7 +589,7 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     the stash, the files are named, and nothing is pushed. Cancel is the default button,
     and the rebased commits use the pinned identity (see *Git identity*). Other rows keep
     their Pull buttons after one repo is pulled.
-  - **Allowlist** button — appears on a row only after a blocked run. Same
+  - **Allowlist (false positive)…** (in the ⋯ menu) — appears on a row only after a blocked run. Same
     confirmed, undoable allowlist as *Fix leak… → Allowlist (false positive)…*.
 - **Auto-reload** — the list refreshes automatically when you save
   `autosync_repos.txt`, with no restart needed (`QFileSystemWatcher`).

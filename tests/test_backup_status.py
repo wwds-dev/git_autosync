@@ -1,7 +1,7 @@
 """The GUI half of full-mac-backup: a row says "Backed up" only when it is."""
 from app.problem_advice import collect
 from app.runner import parse_summary
-from app.ui_main import _with_backup
+from app.ui_main import _backup_state, _github_state, _with_backup
 
 OUTPUT = """\
 2026-10-20 20:40:00 | REPO: sentinel  (/x/sentinel)
@@ -36,17 +36,23 @@ def test_counts_from_an_older_engine_still_parse():
     assert s["counts"]["unlisted"] == 0
 
 
-def test_row_status_follows_the_backup():
+def test_github_and_backup_columns_are_independent():
     s = parse_summary(OUTPUT)
-    assert _with_backup("OK", "", s["backup"]["sentinel"])[0] == "BACKEDUP"
-    assert _with_backup("SYNCED", "", s["backup"]["sonar"])[0] == "NOBACKUP"
-    assert _with_backup("OK", "dry-run", s["backup"]["imprint"])[0] == "PENDING"
-    # Files left out: never "Backed up".
-    assert _with_backup("OK", "", s["backup"]["provisio"])[0] == "PARTIAL"
-    # A blocked repo's own problem comes first.
-    assert _with_backup("BLOCKED", "secret", s["backup"]["sonar"])[0] == "BLOCKED"
-    # No BACKUP line: the row is what the engine said, never a claim of backup.
-    assert _with_backup("OK", "", None) == ("OK", "")
+    # Synced on GitHub but the backup failed: two different answers.
+    assert _github_state("SYNCED") == "SYNCED"
+    assert _backup_state(s["backup"]["sonar"]) == "failed"
+    # Clean counts as synced; the backup says its own thing.
+    assert _github_state("OK") == "SYNCED"
+    assert _backup_state(s["backup"]["sentinel"]) == "ok"
+    assert _backup_state(s["backup"]["imprint"]) == "missing"
+    # Files left out: never "ok".
+    assert _backup_state(s["backup"]["provisio"]) == "partial"
+    # A blocked repo keeps its own GitHub state.
+    assert _github_state("BLOCKED") == "BLOCKED"
+    # No BACKUP line: unknown, never a claim of backup.
+    assert _backup_state(None) is None
+    assert _with_backup("", None) == ""
+    assert _with_backup("dry-run", s["backup"]["imprint"]).startswith("dry-run · backup missing")
 
 
 def test_failed_backups_and_unlisted_repos_get_advice():

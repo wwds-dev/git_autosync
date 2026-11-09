@@ -11,18 +11,20 @@ _BADGE = {
     "BLOCKED":  ("#FFE5E3", "#C0392B", "✕ Blocked"),
     "SKIP":     ("#F0F0F5", "#6E6E73", "⊘ Skipped"),
     "ERROR":    ("#FFF0E0", "#B45309", "⚠ Error"),
-    "OK":       ("#F0F0F5", "#6E6E73", "Clean"),
-    # OK/SYNCED *and* every branch, worktree and stash in the backup repo.
-    # "Clean" alone only ever meant the checked-out branch matched origin.
-    "BACKEDUP": ("#D1F2DC", "#1A7A3A", "✓ Backed up"),
-    # Committed and pushed, *and* everything is in the backup repo.
-    "SYNCEDBACKED": ("#D1F2DC", "#1A7A3A", "✓ Synced + backup"),
-    "NOBACKUP": ("#FFF0E0", "#B45309", "⚠ No backup"),
-    # Pushed, but files were left out (credentials, unscannable, too big) or a
-    # worktree could not be read: the hover text says which.
-    "PARTIAL":  ("#FFF8E7", "#92400E", "⚠ Partial"),
+    "OK":       ("#D1F2DC", "#1A7A3A", "✓ Synced"),
     "PENDING":  ("#EEF4FF", "#2563EB", "● Pending"),
     "MISSING":  ("#FFE5E3", "#C0392B", "⚠ Missing"),
+}
+# The Backup column: is everything on this Mac (every branch, worktree and
+# stash) in the private backup repo? Independent of the GitHub column, which
+# says whether the project itself is committed and pushed.
+_BACKUP = {
+    "ok":      ("#D1F2DC", "#1A7A3A", "✓ Backed up"),
+    # Files were left out (credentials, unscannable, too big) or a worktree
+    # could not be read: the hover text says which.
+    "partial": ("#FFF8E7", "#92400E", "⚠ Partial"),
+    "missing": ("#EEF4FF", "#2563EB", "● Not yet"),
+    "failed":  ("#FFF0E0", "#B45309", "⚠ Failed"),
 }
 # Column geometry, shared with the header row above the list so the two line
 # up. Changing a width here changes the header too. Every column is fixed-width
@@ -30,13 +32,14 @@ _BADGE = {
 ROW_MARGINS = (10, 7, 10, 7)
 ROW_SPACING = 10
 CHECK_W = 20
-NAME_W  = 340  # the name column is fixed, so the actions sit just after it
+NAME_W  = 280  # the name column is fixed, so the actions sit just after it
                # instead of being flung to the far edge of a wide window
-VIS_W   = 76   # fits the VISIBILITY heading; Public / Private
+VIS_W   = 70   # fits the VISIBILITY heading; Public / Private
 TIME_W  = 96   # fits the 'LAST COMMIT' heading; see tests/test_header_fit.py
-BADGE_W = 142
+BADGE_W = 108
 SYNC_W  = 76   # Sync, or Publish… on a repo with no remote yet
 MENU_W  = 34   # the ⋯ menu: Dry-run, Privacy, Fix leak…
+EXTRA_W = 76   # the one conditional button: Fix leak… or Pull
 ACTIONS_W = SYNC_W + ROW_SPACING + MENU_W
 
 _TIME_STYLE  = "color:#6E6E73; font-size:11px;"
@@ -145,6 +148,15 @@ class RepoRow(QWidget):
         self.badge.setStyleSheet(_EMPTY_STYLE)
         layout.addWidget(self.badge)
 
+        # Backup state, separate from the GitHub state above: a project needs
+        # both, and either can be fine while the other is not.
+        self.backup_badge = QLabel()
+        self.backup_badge.setFixedWidth(BADGE_W)
+        self.backup_badge.setAlignment(Qt.AlignCenter)
+        self.backup_badge.setStyleSheet(_EMPTY_STYLE)
+        self._backup = None
+        layout.addWidget(self.backup_badge)
+
         # The one action people reach for. Everything else is in the ⋯ menu.
         if on_publish is not None:
             self.sync_btn    = None
@@ -179,6 +191,12 @@ class RepoRow(QWidget):
         if on_ignore is not None:
             self.ignore_menu_action = menu.addAction("Fix leak…")
             self.ignore_menu_action.triggered.connect(lambda: on_ignore(name))
+        self.pull_action = menu.addAction("Pull…")
+        self.pull_action.setVisible(False)
+        if on_pull is not None:
+            self.pull_action.triggered.connect(lambda: on_pull(name))
+        self._behind = False
+        self._blocked = False
         self.menu_btn.setMenu(menu)
         layout.addWidget(self.menu_btn)
 
@@ -189,6 +207,7 @@ class RepoRow(QWidget):
             self.ignore_btn.setProperty("class", "rowButton")
             self.ignore_btn.setToolTip("Explain why this repo is blocked and how to clear it: allowlist a false positive, remove a real secret from history, or manage the allowlist.")
             self.ignore_btn.setVisible(False)
+            self.ignore_btn.setFixedWidth(EXTRA_W)
             self.ignore_btn.clicked.connect(lambda: on_ignore(name))
             layout.addWidget(self.ignore_btn)
         else:
@@ -202,23 +221,27 @@ class RepoRow(QWidget):
             "Fetch and fast-forward this repo to its remote, so the next sync "
             "can push. Never discards local work.")
         self.pull_btn.setVisible(False)
+        self.pull_btn.setFixedWidth(EXTRA_W)
         if on_pull is not None:
             self.pull_btn.clicked.connect(lambda: on_pull(name))
         layout.addWidget(self.pull_btn)
 
+        # Allowlisting lives in the ⋯ menu and shows only while a finding is
+        # active: a third conditional button made a blocked row wider than the
+        # window, which squeezed every column out of line.
         if on_allowlist is not None:
-            self.allowlist_btn = QPushButton("Allowlist")
-            self.allowlist_btn.setProperty("class", "rowButton")
+            self.allowlist_btn = menu.addAction("Allowlist (false positive)…")
             self.allowlist_btn.setToolTip("Add this finding to .gitleaksignore as a false positive. Asks first, local only, undoable.")
-            self.allowlist_btn.setVisible(False)  # shown only when a finding is active
-            self.allowlist_btn.clicked.connect(lambda: on_allowlist(name))
-            layout.addWidget(self.allowlist_btn)
+            self.allowlist_btn.setVisible(False)
+            self.allowlist_btn.triggered.connect(lambda: on_allowlist(name))
         else:
             self.allowlist_btn = None
 
         # Slack goes here, after the actions — so the whole table packs to the
         # left and the name stays next to its own buttons on a wide window.
         layout.addStretch(1)
+        self.set_status(None)
+        self.set_backup(None)
 
     def _markup(self) -> str:
         return self._name_markup(self.name, self.github_url)
@@ -262,8 +285,29 @@ class RepoRow(QWidget):
                 f" padding:3px 8px; font-size:11px; font-weight:600;"
             )
         else:
-            self.badge.setText("")
-            self.badge.setStyleSheet(_EMPTY_STYLE)
+            self.badge.setText("—")
+            self.badge.setStyleSheet(
+                "color:#9A9AA0; background:transparent; font-size:11px;")
+
+    def set_backup(self, state: str | None):
+        """state: ok / partial / missing / failed, or None when unknown."""
+        self._backup = state
+        if state in _BACKUP:
+            bg, fg, text = _BACKUP[state]
+            self.backup_badge.setText(text)
+            self.backup_badge.setStyleSheet(
+                f"background:{bg}; color:{fg}; border-radius:9px;"
+                f" padding:3px 8px; font-size:11px; font-weight:600;")
+        else:
+            self.backup_badge.setText("—")
+            self.backup_badge.setStyleSheet(
+                "color:#9A9AA0; background:transparent; font-size:11px;")
+
+    def is_synced(self) -> bool:
+        return self._status in ("SYNCED", "OK")
+
+    def is_backed_up(self) -> bool:
+        return self._backup == "ok"
 
     def set_time(self, time_str: str | None, stale: bool = False):
         """Show last-synced time. Amber pill if stale, subtle grey if recent."""
@@ -318,7 +362,7 @@ class RepoRow(QWidget):
     def set_detail(self, text: str | None):
         """Hover text explaining a status — why a sync errored or was blocked."""
         tip = text or ""
-        for w in (self, self.label, self.badge, self.detail_label):
+        for w in (self, self.label, self.badge, self.backup_badge, self.detail_label):
             w.setToolTip(tip)
         self.detail_label.set_full_text(tip)
 
@@ -331,6 +375,7 @@ class RepoRow(QWidget):
         self._missing = missing
         if missing:
             self.set_status("MISSING")
+            self.set_backup(None)
             # A last-synced time for a repo that is gone is noise at best.
             self.time_label.setText("")
             self.time_label.setStyleSheet(_EMPTY_STYLE)
@@ -354,8 +399,17 @@ class RepoRow(QWidget):
 
     def set_behind(self, behind: bool):
         """Offer the fix next to the problem, rather than only naming it."""
-        self.pull_btn.setVisible(behind)
-        if behind:
+        self._behind = behind
+        self._show_conditional()
+
+    def _show_conditional(self):
+        """One conditional button at most — Fix leak… beats Pull — so a row
+        never grows past the fixed columns. Pull stays reachable in ⋯."""
+        show_fix = self._blocked and self.ignore_btn is not None
+        show_pull = self._behind and not show_fix
+        self.pull_btn.setVisible(show_pull)
+        self.pull_action.setVisible(self._behind)
+        if show_pull:
             self.pull_btn.setStyleSheet(
                 "QPushButton { color:#92400E; background:#FFF8E7;"
                 " border:1px solid #F0D9A8; border-radius:5px;"
@@ -363,22 +417,22 @@ class RepoRow(QWidget):
                 "QPushButton:hover { background:#FDEFD0; }")
         else:
             self.pull_btn.setStyleSheet("")
+        if self.ignore_btn:
+            self.ignore_btn.setVisible(show_fix)
 
     def set_blocked(self, blocked: bool):
-        """Show the Allowlist button and colour Fix leak… red when a leak is active."""
+        """Show Fix leak… (red) and the Allowlist menu entry while a leak is active."""
+        self._blocked = blocked
         if self.allowlist_btn:
             self.allowlist_btn.setVisible(blocked)
         if self.ignore_btn:
-            self.ignore_btn.setVisible(blocked)
-            if blocked:
-                self.ignore_btn.setStyleSheet(
-                    "QPushButton { color:#C0392B; background:#FDEDEC;"
-                    " border:1px solid #E6A9A1; border-radius:5px;"
-                    " padding:3px 9px; font-size:11px; font-weight:700; }"
-                    "QPushButton:hover { background:#FAD9D5; border-color:#D98B80; }"
-                )
-            else:
-                self.ignore_btn.setStyleSheet("")
+            self.ignore_btn.setStyleSheet(
+                "QPushButton { color:#C0392B; background:#FDEDEC;"
+                " border:1px solid #E6A9A1; border-radius:5px;"
+                " padding:3px 9px; font-size:11px; font-weight:700; }"
+                "QPushButton:hover { background:#FAD9D5; border-color:#D98B80; }"
+            )
+        self._show_conditional()
 
     def set_buttons_enabled(self, enabled: bool):
         self.menu_btn.setEnabled(enabled)
@@ -387,7 +441,6 @@ class RepoRow(QWidget):
         if self.ignore_btn:     self.ignore_btn.setEnabled(enabled)
         if self.remove_btn:     self.remove_btn.setEnabled(enabled or self._missing)
         if self.pull_btn:       self.pull_btn.setEnabled(enabled)
-        if self.allowlist_btn:  self.allowlist_btn.setEnabled(enabled)
 
     def set_tooltips(self, enabled: bool):
         if self.sync_btn:
