@@ -260,8 +260,8 @@ class MainWindow(QMainWindow):
             self._name_w = int(self._settings.value("repo_column_width", repo_row.NAME_W))
         except (TypeError, ValueError):
             self._name_w = repo_row.NAME_W
-        self._name_w = max(200, min(720, self._name_w))
-        self.setMinimumWidth(1040 + self._name_w - repo_row.NAME_W)
+        self._name_w = self._clamp_name_w(self._name_w)
+        self.setMinimumWidth(self._min_width_for(self._name_w))
         self._build_ui()
         self._reload_repo_list()
         self._check_gitleaks()
@@ -567,14 +567,28 @@ class MainWindow(QMainWindow):
         # Fetch GitHub visibility for each repo in the background (non-blocking)
         QTimer.singleShot(0, self._fetch_all_visibility)
 
+    @staticmethod
+    def _screen_width() -> int:
+        screen = QApplication.primaryScreen()
+        return screen.availableGeometry().width() if screen else 1440
+
+    def _clamp_name_w(self, width: int) -> int:
+        """Keep the Repository column small enough that the window fits the screen."""
+        room = self._screen_width() - 1040 + repo_row.NAME_W
+        return max(200, min(720, width, room))
+
+    def _min_width_for(self, name_w: int) -> int:
+        return min(1040 + name_w - repo_row.NAME_W, self._screen_width())
+
     def _set_name_width(self, width: int):
         """Resize the Repository column for the header and every row."""
+        width = self._clamp_name_w(width)
         self._name_w = width
         self._header_name.setFixedWidth(width)
         for row in self._row_widgets.values():
             row.set_name_width(width)
         # The other columns are fixed, so the window must grow with this one.
-        self.setMinimumWidth(1040 + width - repo_row.NAME_W)
+        self.setMinimumWidth(self._min_width_for(width))
         self._settings.setValue("repo_column_width", width)
         self._place_name_handle()
 

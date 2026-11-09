@@ -284,10 +284,16 @@ def test_open_from_the_tray_menu_shows_and_activates(parked, monkeypatch):
     assert calls == ["dock=True", "show", "raise_", "activate", "activateWindow"]
 
 
-def test_repository_column_resizes_header_and_every_row(qapp, tmp_path):
+def test_repository_column_resizes_header_and_every_row(qapp, tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
+    import app.ui_main as ui_main
     from app.ui_main import MainWindow
-    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path))
+    # setPath() does not redirect macOS plists, so a test used to overwrite the
+    # user's real saved column width. Use an ini file and a roomy fake screen.
+    ini = str(tmp_path / "t.ini")
+    monkeypatch.setattr(ui_main, "QSettings",
+                        lambda *a: QSettings(ini, QSettings.IniFormat))
+    monkeypatch.setattr(MainWindow, "_screen_width", staticmethod(lambda: 1920))
     window = MainWindow()
     window.show()
     qapp.processEvents()
@@ -300,3 +306,16 @@ def test_repository_column_resizes_header_and_every_row(qapp, tmp_path):
     # Reset (what double-clicking the handle does) goes back to the default.
     window._name_handle.mouseDoubleClickEvent(None)
     assert window._header_name.width() == 280
+
+
+def test_wide_saved_column_never_makes_window_wider_than_screen(qapp, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    import app.ui_main as ui_main
+    from app.ui_main import MainWindow
+    ini = str(tmp_path / "t.ini")
+    QSettings(ini, QSettings.IniFormat).setValue("repo_column_width", 720)
+    monkeypatch.setattr(ui_main, "QSettings",
+                        lambda *a: QSettings(ini, QSettings.IniFormat))
+    monkeypatch.setattr(MainWindow, "_screen_width", staticmethod(lambda: 1280))
+    window = MainWindow()
+    assert window.minimumWidth() <= 1280
