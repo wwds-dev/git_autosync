@@ -181,6 +181,8 @@ def _with_backup(status: str, detail: str, backup: dict | None) -> tuple[str, st
         return "PENDING", detail
     if backup["state"] == "partial":
         return "PARTIAL", detail
+    if status == "SYNCED":
+        return "SYNCEDBACKED", detail   # both safety nets, said in one badge
     return ("BACKEDUP" if status == "OK" else status), detail
 
 class MainWindow(QMainWindow):
@@ -318,7 +320,8 @@ class MainWindow(QMainWindow):
             "<b>Synced</b> = committed and pushed to the project's own GitHub repo. "
             "<b>Backed up</b> = a copy of everything on this Mac is in the private "
             "backup repo; nothing is committed, so uncommitted files still show "
-            "<b>Pending</b> until you Sync.")
+            "<b>Pending</b> until you Sync. A repo can be both: "
+            "<b>Synced + backup</b>.")
         self.status_legend.setWordWrap(True)
         self.status_legend.setStyleSheet(
             "color:#6E6E73; font-size:11px; padding:2px 4px 0 4px;")

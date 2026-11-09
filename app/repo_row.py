@@ -15,6 +15,8 @@ _BADGE = {
     # OK/SYNCED *and* every branch, worktree and stash in the backup repo.
     # "Clean" alone only ever meant the checked-out branch matched origin.
     "BACKEDUP": ("#D1F2DC", "#1A7A3A", "✓ Backed up"),
+    # Committed and pushed, *and* everything is in the backup repo.
+    "SYNCEDBACKED": ("#D1F2DC", "#1A7A3A", "✓ Synced + backup"),
     "NOBACKUP": ("#FFF0E0", "#B45309", "⚠ No backup"),
     # Pushed, but files were left out (credentials, unscannable, too big) or a
     # worktree could not be read: the hover text says which.
@@ -32,7 +34,7 @@ NAME_W  = 340  # the name column is fixed, so the actions sit just after it
                # instead of being flung to the far edge of a wide window
 VIS_W   = 76   # fits the VISIBILITY heading; Public / Private
 TIME_W  = 96   # fits the 'LAST COMMIT' heading; see tests/test_header_fit.py
-BADGE_W = 104
+BADGE_W = 142
 SYNC_W  = 76   # Sync, or Publish… on a repo with no remote yet
 MENU_W  = 34   # the ⋯ menu: Dry-run, Privacy, Fix leak…
 ACTIONS_W = SYNC_W + ROW_SPACING + MENU_W

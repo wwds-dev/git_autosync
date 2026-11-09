@@ -529,7 +529,7 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     "no commits" pill only when the repo has no commits at all. Hover the time
     for the exact commit timestamp plus when git_autosync itself last pushed.
   - A colored **status badge** after each run:
-    `✓ Synced` (green) · `✕ Blocked` (red) · `⊘ Skipped` (grey) ·
+    `✓ Synced + backup` / `✓ Synced` (green) · `✕ Blocked` (red) · `⊘ Skipped` (grey) ·
     `⚠ Error` (amber) · `No changes` (grey). Hover the row, name or badge for the
     reason behind an error or block (e.g. "remote has 6 commit(s) you do not have -
     pull first").
@@ -544,7 +544,7 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     | Clears **Pending** (uncommitted changes) | Yes | No — the files are still uncommitted, just safely copied |
     | Row shows | `✓ Synced` | `✓ Backed up` — nothing to sync, and everything is in the backup |
 
-    In short: **Synced** means the work is now part of the project on GitHub; **Backed up**
+    A repo can be both, and then says **Synced + backup**. In short: **Synced** means the work is now part of the project on GitHub; **Backed up**
     means a restore point exists. A repo that still says *Pending* after a backup is
     protected, but not committed — run **Sync now** to commit it. Every run does both, so
     the two normally appear together (see *Backing up everything on this Mac*).
