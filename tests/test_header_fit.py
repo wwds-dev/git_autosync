@@ -282,3 +282,21 @@ def test_open_from_the_tray_menu_shows_and_activates(parked, monkeypatch):
     # Dock tile first (an Accessory app cannot take focus), the app activated
     # after the window exists and before it is asked to take focus.
     assert calls == ["dock=True", "show", "raise_", "activate", "activateWindow"]
+
+
+def test_repository_column_resizes_header_and_every_row(qapp, tmp_path):
+    from PySide6.QtCore import QSettings
+    from app.ui_main import MainWindow
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path))
+    window = MainWindow()
+    window.show()
+    qapp.processEvents()
+    window._set_name_width(420)
+    qapp.processEvents()
+    assert window._header_name.width() == 420
+    assert all(r._name_col.width() == 420 for r in window._row_widgets.values())
+    # The window must not clip the actions once the column is wider.
+    assert window.minimumWidth() >= 1040 + 420 - 280
+    # Reset (what double-clicking the handle does) goes back to the default.
+    window._name_handle.mouseDoubleClickEvent(None)
+    assert window._header_name.width() == 280

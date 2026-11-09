@@ -109,6 +109,7 @@ class RepoRow(QWidget):
         # (what a dry-run would push, what is not backed up) — that used to
         # live only in a tooltip.
         name_col = QWidget()
+        self._name_col = name_col
         name_col.setFixedWidth(NAME_W)
         col = QVBoxLayout(name_col)
         col.setContentsMargins(0, 0, 0, 0)
@@ -242,6 +243,11 @@ class RepoRow(QWidget):
         layout.addStretch(1)
         self.set_status(None)
         self.set_backup(None)
+
+    def set_name_width(self, width: int):
+        """The Repository column is the one users resize (drag its header edge)."""
+        self._name_col.setFixedWidth(width)
+        self.detail_label.set_full_text(self.detail_label._full)
 
     def _markup(self) -> str:
         return self._name_markup(self.name, self.github_url)

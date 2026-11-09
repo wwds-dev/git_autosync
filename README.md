@@ -519,6 +519,10 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     The columns are fixed-width and the table packs to the left, so on a wide window the
     buttons stay next to their repo name instead of drifting to the far edge (the window's
     minimum width is 1040px for that reason). Rows are banded in alternating shades.
+    Drag the thin handle at the right edge of the **Repository** heading to widen or narrow
+    that column for every row (the long second line shows more when it is wider);
+    double-click the handle to reset it. The width is remembered between launches, and
+    the window's minimum width grows with it.
   - A row for a repo whose folder can no longer be found on disk goes grey and disabled
     except for a **Remove** button, which drops just that entry from
     `autosync_repos.txt` — no files and no GitHub repo are touched.

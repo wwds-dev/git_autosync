@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QFileSystemWatcher, QSize, QTimer
+from PySide6.QtCore import Qt, QFileSystemWatcher, QSettings, QSize, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -182,6 +182,49 @@ def _with_backup(detail: str, backup: dict | None) -> str:
     return f"{detail} · {note}" if detail else note
 
 
+class _ColumnHandle(QWidget):
+    """A thin grab strip on a header cell's right edge: drag to resize the
+    column, double-click to reset it."""
+
+    def __init__(self, parent, on_width, get_width, reset_width, lo=200, hi=720):
+        super().__init__(parent)
+        self._on_width, self._get_width = on_width, get_width
+        self._reset, self._lo, self._hi = reset_width, lo, hi
+        self._start = None
+        self.setFixedWidth(9)
+        self.setCursor(Qt.SplitHCursor)
+        self.setToolTip("Drag to resize the column · double-click to reset")
+        self.setStyleSheet("background:transparent;")
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setPen(QColor("#B8B8C0" if self.underMouse() or self._start else "#D6D6DC"))
+        x = self.width() // 2
+        p.drawLine(x, 6, x, self.height() - 6)
+
+    def enterEvent(self, e):
+        self.update()
+
+    def leaveEvent(self, e):
+        self.update()
+
+    def mousePressEvent(self, e):
+        self._start = (e.globalPosition().x(), self._get_width())
+
+    def mouseMoveEvent(self, e):
+        if self._start:
+            x0, w0 = self._start
+            w = int(w0 + e.globalPosition().x() - x0)
+            self._on_width(max(self._lo, min(self._hi, w)))
+
+    def mouseReleaseEvent(self, e):
+        self._start = None
+        self.update()
+
+    def mouseDoubleClickEvent(self, e):
+        self._reset()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -212,6 +255,13 @@ class MainWindow(QMainWindow):
         # _DockActivateFilter in main.py.
         self.hidden_to_tray = False
 
+        self._settings = QSettings("wwds-dev", "git_autosync")
+        try:
+            self._name_w = int(self._settings.value("repo_column_width", repo_row.NAME_W))
+        except (TypeError, ValueError):
+            self._name_w = repo_row.NAME_W
+        self._name_w = max(200, min(720, self._name_w))
+        self.setMinimumWidth(1040 + self._name_w - repo_row.NAME_W)
         self._build_ui()
         self._reload_repo_list()
         self._check_gitleaks()
@@ -494,6 +544,7 @@ class MainWindow(QMainWindow):
             if name not in no_remote:
                 row.set_github_url(paths.repo_github_url(name))
             self._apply_time(row, name)
+            row.set_name_width(self._name_w)
             item = QListWidgetItem()
             # Width 0 lets the item span the viewport instead of stopping at the
             # row's natural width — otherwise the right-hand columns float short
@@ -515,6 +566,25 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._align_header_to_rows)
         # Fetch GitHub visibility for each repo in the background (non-blocking)
         QTimer.singleShot(0, self._fetch_all_visibility)
+
+    def _set_name_width(self, width: int):
+        """Resize the Repository column for the header and every row."""
+        self._name_w = width
+        self._header_name.setFixedWidth(width)
+        for row in self._row_widgets.values():
+            row.set_name_width(width)
+        # The other columns are fixed, so the window must grow with this one.
+        self.setMinimumWidth(1040 + width - repo_row.NAME_W)
+        self._settings.setValue("repo_column_width", width)
+        self._place_name_handle()
+
+    def _place_name_handle(self):
+        h = self._header_name
+        x = h.x() + h.width() + (repo_row.ROW_SPACING // 2) - self._name_handle.width() // 2
+        self._name_handle.setGeometry(x, 4, self._name_handle.width(),
+                                      max(self._list_header.height() - 8, 10))
+        self._name_handle.raise_()
+        self._name_handle.show()
 
     def _refresh_fleet(self):
         """One line saying whether every project is synced and backed up."""
@@ -585,7 +655,11 @@ class MainWindow(QMainWindow):
         self.select_all_box.clicked.connect(self._on_select_all_clicked)
         lay.addWidget(self.select_all_box)
 
-        lay.addWidget(cell("Repository", repo_row.NAME_W))
+        self._header_name = cell("Repository", self._name_w)
+        lay.addWidget(self._header_name)
+        self._name_handle = _ColumnHandle(
+            header, self._set_name_width, lambda: self._name_w,
+            lambda: self._set_name_width(repo_row.NAME_W))
         lay.addWidget(cell("Visibility", repo_row.VIS_W))
         lay.addWidget(cell("Last commit", repo_row.TIME_W,
                            Qt.AlignRight | Qt.AlignVCenter))
@@ -643,6 +717,7 @@ class MainWindow(QMainWindow):
         bar = (self.repo_list.verticalScrollBar().width()
                if self.repo_list.verticalScrollBar().isVisible() else 0)
         self._list_header.setContentsMargins(frame, 0, frame + bar, 0)
+        QTimer.singleShot(0, self._place_name_handle)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
