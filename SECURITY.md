@@ -1,5 +1,3 @@
-<!-- Owner: enable GitHub's private vulnerability reporting for wwds-dev/git_autosync (Settings > Code security > Private vulnerability reporting); the form linked below does not work until then. Delete this comment afterwards. -->
-
 # Security
 
 git_autosync is free, open-source software maintained by one person. It commits and pushes to your repositories with your credentials, and decides from a secret scan whether a push may go out,
