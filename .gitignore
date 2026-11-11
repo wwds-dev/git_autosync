@@ -36,3 +36,6 @@ _build_info.json
 
 # Build output (see build_app.sh: .noindex keeps Spotlight out)
 build.noindex/
+
+# The legal pack lives in the Foundry HQ (private repo); this path is a link to it.
+/docs/legal
