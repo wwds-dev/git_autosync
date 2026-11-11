@@ -110,7 +110,7 @@
 - [ ] `P3` `testing` `@ai` The module-scoped `window` fixture in `tests/test_header_fit.py` still builds `MainWindow()` against the real QSettings and the real screen, so the header-fit checks depend on the owner's saved column width. Give it the same ini file and fake screen width as the two resize tests.
 - [ ] `P3` `bug` `@me` If the Repository column opens unusually wide, double-click its header handle once: before `6f4a032` a test wrote 720 into the real saved settings, and the clamp only keeps it inside the screen.
 - [ ] `P3` `docs` `@ai` `docs/screenshot.png` (named in the retake item below) is not in the repo and the README links no screenshot. When it is retaken, show the resizable Repository column and the taller repo list, and link it from the README's *Desktop app* section.
-- [ ] `P2` `docs` `@ai` Fill in `docs/company/app-context.md`: it is still the Foundry skeleton (every section a placeholder), yet AGENTS.md tells every agent to read it first and treat its Invariants as hard rules.
+- [ ] `P2` `docs` `@ai` Fill in `docs/foundry/app-context.md`: it is still the Foundry skeleton (every section a placeholder), yet AGENTS.md tells every agent to read it first and treat its Invariants as hard rules.
 - [ ] `P3` `docs` `@ai` Retake `docs/screenshot.png` (last changed 2026-08-03). It predates the ↗ GitHub links, the header tristate checkbox, the Last commit column and the Pull buttons.
 - [ ] `P3` `docs` `@ai` Add a `CHANGELOG.md`: AGENTS.md's definition of done requires an entry per change, and the repo has none.
 
