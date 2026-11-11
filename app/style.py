@@ -99,8 +99,8 @@ QPushButton#primaryButton {{
     border-color: {ACCENT_DARK};
     color: white;
     font-weight: 600;
-    font-size: 14px;
-    padding: 8px 24px;
+    font-size: 13px;
+    padding: 7px 20px;
 }}
 QPushButton#primaryButton:hover   {{ background: {ACCENT_DARK}; }}
 QPushButton#primaryButton:disabled {{
@@ -112,7 +112,7 @@ QPushButton#primaryButton:disabled {{
 QPushButton#secondaryButton {{
     background: #FFFFFF;
     border: 1px solid #D1D1D6;
-    padding: 8px 16px;
+    padding: 7px 16px;
     font-size: 13px;
 }}
 
@@ -187,6 +187,33 @@ QLabel#repoName {{
     font-weight: 500;
     color: #1D1D1F;
     font-size: 13px;
+}}
+
+QLabel#appTitle {{ font-size: 17px; font-weight: 600; color: #1D1D1F; }}
+QLabel#mutedLabel {{ color: #8E8E93; font-size: 12px; }}
+QLabel#legend {{ color: #8E8E93; font-size: 11px; padding: 0 2px; }}
+QPushButton#moreButton {{
+    padding: 6px 0; min-width: 34px; max-width: 34px; font-size: 15px;
+}}
+QPushButton#moreButton::menu-indicator {{ image: none; width: 0; }}
+QPushButton#chip {{
+    padding: 4px 12px; border-radius: 13px; font-size: 12px; font-weight: 500;
+    background: transparent; border: 1px solid transparent; color: #6E6E73;
+}}
+QPushButton#chip:hover {{ background: #EBEBF0; }}
+QPushButton#chip:checked {{
+    background: #E3E3E8; border-color: #E3E3E8; color: #1D1D1F; font-weight: 600;
+}}
+QFrame#driftBanner {{
+    background: #EEF4FF; border: 1px solid #BFD3FF; border-radius: 8px;
+}}
+QFrame#driftBanner QLabel {{ color: #1E3A8A; background: transparent; }}
+QFrame#logStrip {{
+    background: #FFFFFF; border: 1px solid #E5E5EA; border-radius: 8px;
+}}
+QLabel#logStatus {{
+    font-family: "SF Mono", Menlo, monospace; font-size: 11px;
+    color: #6E6E73; background: transparent;
 }}
 
 /* ── Status bar ─────────────────────────────────────────────── */

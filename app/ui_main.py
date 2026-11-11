@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -39,7 +40,7 @@ from . import repo_row
 from . import diverged
 from .problem_advice import collect as collect_advice
 from .problems_dialog import ProblemsDialog
-from .repo_row import RepoRow
+from .repo_row import RepoRow, _ElidedLabel as _ElidedText
 from .rescan_dialog import RescanDialog, plan_changes
 from .runner import AutosyncRunner
 from .schedule_dialog import ScheduleDialog
@@ -225,16 +226,59 @@ class _ColumnHandle(QWidget):
         self._reset()
 
 
+class _Tile(QFrame):
+    """One summary number: what share of the projects is in the wanted state."""
+
+    _TONES = {
+        "good":    ("#FFFFFF", "#1A7A3A", "#E5E5EA"),
+        "warn":    ("#FFF8E7", "#92400E", "#F0D9A8"),
+        "bad":     ("#FDEDEC", "#C0392B", "#F2C4BE"),
+        "neutral": ("#FFFFFF", "#1D1D1F", "#E5E5EA"),
+    }
+
+    def __init__(self, caption: str, on_click=None):
+        super().__init__()
+        self.setObjectName("tile")
+        self._on_click = on_click
+        if on_click:
+            self.setCursor(Qt.PointingHandCursor)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 9, 14, 10)
+        lay.setSpacing(1)
+        self.caption = QLabel(caption)
+        self.value = QLabel("—")
+        self.value.setTextFormat(Qt.RichText)
+        lay.addWidget(self.caption)
+        lay.addWidget(self.value)
+        self.set("—", "", "neutral")
+
+    def set(self, number, rest: str, tone: str = "neutral"):
+        bg, fg, border = self._TONES[tone]
+        self.setStyleSheet(
+            f"#tile {{ background:{bg}; border:1px solid {border}; border-radius:10px; }}"
+            f"#tile QLabel {{ background:transparent; }}")
+        self.caption.setStyleSheet(f"color:{fg if tone in ('warn', 'bad') else '#6E6E73'};"
+                                   " font-size:11px; font-weight:600;")
+        self.value.setText(
+            f"<span style='font-size:20px; font-weight:600; color:{fg};'>{number}</span>"
+            f"<span style='font-size:12px; color:#6E6E73;'>&nbsp; {rest}</span>")
+
+    def mousePressEvent(self, event):
+        if self._on_click:
+            self._on_click()
+        super().mousePressEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"git_autosync {version.version_string()}")
         # The columns are fixed, so below this the actions clip rather than
         # reflow — the table needs ~870px plus margins.
-        self.setMinimumSize(1040, 480)
+        self.setMinimumSize(repo_row.window_min(repo_row.NAME_W), 520)
         # Sized to the table rather than the screen: the columns are fixed, so a
         # wider window only adds empty space to the right of the actions.
-        self.resize(1100, 660)
+        self.resize(repo_row.window_min(repo_row.NAME_W) + 60, 720)
 
         self.config_path = paths.user_config_path()
         self.runner = AutosyncRunner(self)
@@ -307,8 +351,81 @@ class MainWindow(QMainWindow):
         central = QWidget(self)
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(16, 14, 16, 12)
+        root.setContentsMargins(18, 14, 18, 12)
         root.setSpacing(10)
+
+        # ── Top bar: name, when it last/next runs, and the two run buttons ──
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        title = QLabel("git_autosync")
+        title.setObjectName("appTitle")
+        titles.addWidget(title)
+        when = QHBoxLayout()
+        when.setSpacing(10)
+        self.last_sync_label = QLabel()
+        self.last_sync_label.setObjectName("mutedLabel")
+        self.next_sync_label = QLabel()
+        self.next_sync_label.setObjectName("mutedLabel")
+        when.addWidget(self.last_sync_label)
+        when.addWidget(self.next_sync_label)
+        when.addStretch(1)
+        titles.addLayout(when)
+        top.addLayout(titles, stretch=1)
+
+        self.dry_run_btn = QPushButton("Check")
+        self.dry_run_btn.setObjectName("secondaryButton")
+        self.dry_run_btn.clicked.connect(self._on_dry_run)
+        top.addWidget(self.dry_run_btn)
+        self.sync_btn = QPushButton("Sync all")
+        self.sync_btn.setObjectName("primaryButton")
+        self.sync_btn.clicked.connect(self._on_sync)
+        top.addWidget(self.sync_btn)
+
+        # Everything used now and then lives behind ⋯, so the window shows
+        # the repos rather than two rows of buttons.
+        self.more_btn = QPushButton("⋯")
+        self.more_btn.setObjectName("moreButton")
+        self.more_btn.setToolTip("More: repo list, pull, privacy, schedule, logs, docs, quit")
+        more = QMenu(self.more_btn)
+        more.setToolTipsVisible(True)
+        self.rescan_btn = more.addAction("Find repos…", self._on_rescan)
+        self.rescan_btn.setToolTip(
+            "Look at every git repo in your projects folder and compare it with "
+            "this list: add repos that are missing from it, fix the path of any "
+            "that moved, and remove ones that are gone.")
+        self.edit_btn = more.addAction("Edit repo list", self._on_edit_repo_list)
+        more.addSeparator()
+        self.pull_selected_btn = more.addAction("Pull ticked repos", self._on_pull_selected)
+        self.pull_selected_btn.setToolTip(
+            "Fast-forward every ticked repo that is behind its remote. "
+            "Skips repos that are level, and refuses any that have diverged.")
+        self.privacy_selected_btn = more.addAction(
+            "Change privacy of ticked repos…", self._on_privacy_selected)
+        self.privacy_selected_btn.setToolTip(
+            "Change public/private on every ticked repo, after confirming the "
+            "list and the direction.")
+        self.create_repo_btn = more.addAction("Create GitHub repo…", self._on_create_repo)
+        more.addSeparator()
+        self.schedule_btn = more.addAction("Schedule…", self._on_open_schedule_dialog)
+        self.open_logs_btn = more.addAction("Show logs in Finder", self._on_open_logs)
+        self.docs_btn = more.addAction("Documentation", self._on_open_documentation)
+        more.addSeparator()
+        self.hide_btn = more.addAction("Hide to menu bar", self._on_hide_to_tray)
+        self.hide_btn.setToolTip(
+            "Close this window. Scheduled syncs keep running; the menu bar "
+            "icon brings it back.")
+        # Cmd+Q and the Dock's Quit deliberately only hide to the menu bar, so
+        # without this the only real exit is a menu the user has to know about.
+        self.quit_btn = more.addAction("Quit git_autosync", self._on_quit_clicked)
+        self.quit_btn.setToolTip(
+            "Quit git_autosync completely — no window and no menu bar icon. "
+            "A schedule set up with ‘Schedule…’ keeps running without the "
+            "app; turn it off there to stop it.")
+        self.more_btn.setMenu(more)
+        top.addWidget(self.more_btn)
+        root.addLayout(top)
 
         # gitleaks warning banner
         self.gitleaks_banner = QLabel()
@@ -320,155 +437,149 @@ class MainWindow(QMainWindow):
         self.gitleaks_banner.hide()
         root.addWidget(self.gitleaks_banner)
 
+        # ── The goal at a glance: every project synced and backed up ──
+        tiles = QHBoxLayout()
+        tiles.setSpacing(10)
+        self.tile_github = _Tile("On GitHub")
+        self.tile_backup = _Tile("Backup")
+        self.tile_attention = _Tile("Needs you", on_click=lambda: self._set_filter("attention"))
+        for t in (self.tile_github, self.tile_backup, self.tile_attention):
+            tiles.addWidget(t, stretch=1)
+        root.addLayout(tiles)
+
         # Repo-list drift banner — the list is a file, not a live view of disk,
-        # so say plainly when the two have diverged instead of waiting for the
-        # user to guess that 'Find repos' exists.
-        self.drift_banner = QLabel()
-        self.drift_banner.setWordWrap(True)
-        self.drift_banner.setStyleSheet(
-            "background:#EEF4FF; color:#1E3A8A; padding:9px 12px;"
-            " border:1px solid #BFD3FF; border-radius:8px;"
-        )
+        # so say plainly when the two have diverged, with the fix beside it.
+        self.drift_banner = QFrame()
+        self.drift_banner.setObjectName("driftBanner")
+        drift = QHBoxLayout(self.drift_banner)
+        drift.setContentsMargins(12, 7, 8, 7)
+        self.drift_text = QLabel()
+        self.drift_text.setWordWrap(True)
+        drift.addWidget(self.drift_text, stretch=1)
+        drift_btn = QPushButton("Update list…")
+        drift_btn.setProperty("class", "rowButton")
+        drift_btn.clicked.connect(self._on_rescan)
+        drift.addWidget(drift_btn)
         self.drift_banner.hide()
         root.addWidget(self.drift_banner)
 
-        # ── Repos section ──────────────────────────────────────────
-        repos_header = QHBoxLayout()
-        repos_lbl = QLabel("Repositories")
-        repos_lbl.setObjectName("sectionLabel")
-        repos_header.addWidget(repos_lbl)
-        # The goal, at a glance: every project synced to GitHub *and* backed up.
-        self.fleet_label = QLabel("")
-        self.fleet_label.setStyleSheet("font-size:12px; padding-left:12px;")
-        repos_header.addWidget(self.fleet_label)
-        repos_header.addStretch(1)
-        self.rescan_btn = QPushButton("Find repos…")
-        self.rescan_btn.setProperty("class", "rowButton")
-        self.rescan_btn.setToolTip(
-            "Look at every git repo in your projects folder and compare it with "
-            "this list: add repos that are missing from it, fix the path of any "
-            "that moved, and remove ones that are gone.")
-        self.rescan_btn.clicked.connect(self._on_rescan)
-        repos_header.addWidget(self.rescan_btn)
-        self.edit_btn = QPushButton("Edit list")
-        self.edit_btn.clicked.connect(self._on_edit_repo_list)
-        repos_header.addWidget(self.edit_btn)
-        root.addLayout(repos_header)
+        # ── Filter: find a repo, or show only the ones that need you ──
+        filt = QHBoxLayout()
+        filt.setSpacing(6)
+        self.filter_field = QLineEdit()
+        self.filter_field.setPlaceholderText("Filter repos")
+        self.filter_field.setClearButtonEnabled(True)
+        self.filter_field.setFixedWidth(220)
+        self.filter_field.textChanged.connect(self._apply_filter)
+        filt.addWidget(self.filter_field)
+        self._filter = "all"
+        self._chips = {}
+        for key, text in (("all", "All"), ("attention", "Needs attention"),
+                          ("private", "Private")):
+            chip = QPushButton(text)
+            chip.setObjectName("chip")
+            chip.setCheckable(True)
+            chip.setAutoExclusive(True)
+            chip.setChecked(key == "all")
+            chip.clicked.connect(lambda _=False, k=key: self._set_filter(k))
+            self._chips[key] = chip
+            filt.addWidget(chip)
+        filt.addStretch(1)
+        hint = QLabel("Ticked repos are included in Check and Sync all")
+        hint.setObjectName("mutedLabel")
+        filt.addWidget(hint)
+        root.addLayout(filt)
 
+        # ── Repo table ────────────────────────────────────────────
+        table = QVBoxLayout()
+        table.setSpacing(0)
         self._list_header = self._build_list_header()
-        root.addWidget(self._list_header)
-
+        table.addWidget(self._list_header)
         self.repo_list = QListWidget()
         self.repo_list.setSelectionMode(QAbstractItemView.NoSelection)
         # Banding comes from the list, not the row widgets: an item widget sits
         # on the viewport and the item's background is drawn over it.
         self.repo_list.setAlternatingRowColors(True)
-        root.addWidget(self.repo_list, stretch=4)
+        table.addWidget(self.repo_list)
+        root.addLayout(table, stretch=2)
 
-        # Always visible: the two green-ish badges look alike but mean different
-        # things, and "Pending" after a backup confused the owner.
+        # Always visible: the two badges look alike but mean different things,
+        # and "Pending" after a backup confused the owner.
         self.status_legend = QLabel(
-            "<b>GitHub</b>: <b>Synced</b> = committed and pushed to the project's "
-            "own repo; <b>Pending</b> = changes still waiting. "
-            "<b>Backup</b>: <b>Backed up</b> = a copy of everything on this Mac "
-            "(branches, worktrees, uncommitted files) is in the private backup "
-            "repo. A project needs both; a backup alone never commits anything.")
+            "<b>Synced</b> = committed and pushed to the project's own GitHub repo. "
+            "&nbsp;&nbsp;<b>Backed up</b> = a private copy of everything on this "
+            "Mac, nothing committed. A project needs both.")
         self.status_legend.setWordWrap(True)
-        self.status_legend.setStyleSheet(
-            "color:#6E6E73; font-size:11px; padding:2px 4px 0 4px;")
+        self.status_legend.setObjectName("legend")
         root.addWidget(self.status_legend)
 
-        # ── Commit message ─────────────────────────────────────────
         self.msg_field = QLineEdit()
         self.msg_field.setPlaceholderText(
-            "Custom commit message (optional) — leave blank for the default timestamp"
-        )
+            "Commit message for Sync all (optional) — blank uses a timestamp")
         root.addWidget(self.msg_field)
 
-        # ── Primary actions ────────────────────────────────────────
-        primary_row = QHBoxLayout()
-        primary_row.setSpacing(10)
-        self.dry_run_btn = QPushButton("Dry-run (safe)")
-        self.dry_run_btn.setObjectName("secondaryButton")
-        self.dry_run_btn.clicked.connect(self._on_dry_run)
-        self.sync_btn = QPushButton("Sync now")
-        self.sync_btn.setObjectName("primaryButton")
-        self.sync_btn.clicked.connect(self._on_sync)
-        primary_row.addWidget(self.dry_run_btn)
-        primary_row.addWidget(self.sync_btn, stretch=1)
-        root.addLayout(primary_row)
-
-        # ── Secondary actions ──────────────────────────────────────
-        secondary_row = QHBoxLayout()
-        secondary_row.setSpacing(8)
-        self.create_repo_btn = QPushButton("Create GitHub Repo…")
-        self.create_repo_btn.clicked.connect(self._on_create_repo)
-        self.schedule_btn = QPushButton("Schedule…")
-        self.schedule_btn.clicked.connect(self._on_open_schedule_dialog)
-        self.open_logs_btn = QPushButton("Logs")
-        self.open_logs_btn.clicked.connect(self._on_open_logs)
-        self.docs_btn = QPushButton("Docs")
-        self.docs_btn.clicked.connect(self._on_open_documentation)
-        for b in (self.create_repo_btn, self.schedule_btn,
-                  self.open_logs_btn, self.docs_btn):
-            secondary_row.addWidget(b)
-        secondary_row.addStretch(1)
-
-        # Cmd+Q and the Dock's Quit deliberately only hide to the menu bar, so
-        # without this the only real exit is a menu the user has to know about.
-        self.pull_selected_btn = QPushButton("Pull selected")
-        self.pull_selected_btn.setToolTip(
-            "Fast-forward every ticked repo that is behind its remote. "
-            "Skips repos that are level, and refuses any that have diverged.")
-        self.pull_selected_btn.clicked.connect(self._on_pull_selected)
-        secondary_row.addWidget(self.pull_selected_btn)
-
-        self.privacy_selected_btn = QPushButton("Privacy…")
-        self.privacy_selected_btn.setToolTip(
-            "Change public/private on every ticked repo, after confirming the "
-            "list and the direction.")
-        self.privacy_selected_btn.clicked.connect(self._on_privacy_selected)
-        secondary_row.addWidget(self.privacy_selected_btn)
-
-        self.hide_btn = QPushButton("Hide to menu bar")
-        self.hide_btn.setToolTip(
-            "Close this window. Scheduled syncs keep running; the menu bar "
-            "icon brings it back.")
-        self.hide_btn.clicked.connect(self._on_hide_to_tray)
-        secondary_row.addWidget(self.hide_btn)
-
-        self.quit_btn = QPushButton("Quit")
-        self.quit_btn.setObjectName("quitButton")
-        self.quit_btn.setToolTip(
-            "Quit git_autosync completely — no window and no menu bar icon. "
-            "A schedule set up with ‘Schedule…’ keeps running without the "
-            "app; turn it off there to stop it.")
-        self.quit_btn.clicked.connect(self._on_quit_clicked)
-        secondary_row.addWidget(self.quit_btn)
-        root.addLayout(secondary_row)
-
-        # ── Summary banner ─────────────────────────────────────────
+        # ── Summary of the last run ───────────────────────────────
         self.summary_label = QLabel()
         self.summary_label.setWordWrap(True)
         self.summary_label.hide()
         root.addWidget(self.summary_label)
 
-        # ── Output ────────────────────────────────────────────────
-        output_lbl = QLabel("Output")
-        output_lbl.setObjectName("sectionLabel")
-        root.addWidget(output_lbl)
+        # ── Log: a one-line strip that opens into the full output ──
+        self.log_strip = QFrame()
+        self.log_strip.setObjectName("logStrip")
+        strip = QHBoxLayout(self.log_strip)
+        strip.setContentsMargins(12, 5, 6, 5)
+        self.log_status = _ElidedText()
+        self.log_status.setObjectName("logStatus")
+        self.log_status.set_full_text("Idle")
+        strip.addWidget(self.log_status, stretch=1)
+        self.log_toggle = QPushButton("Show log")
+        self.log_toggle.setProperty("class", "rowButton")
+        self.log_toggle.setCheckable(True)
+        self.log_toggle.toggled.connect(self._set_log_open)
+        strip.addWidget(self.log_toggle)
+        root.addWidget(self.log_strip)
 
         self.output_pane = QPlainTextEdit()
         self.output_pane.setReadOnly(True)
         self.output_pane.setMaximumBlockCount(5000)
-        self.output_pane.setMinimumHeight(70)
+        self.output_pane.setMinimumHeight(140)
+        self.output_pane.hide()
         root.addWidget(self.output_pane, stretch=1)
+        self._root_layout = root
+        root.setStretchFactor(self.output_pane, 0)
 
-        # ── Status bar ─────────────────────────────────────────────
-        self.last_sync_label = QLabel()
-        self.statusBar().addPermanentWidget(self.last_sync_label)
-        self.next_sync_label = QLabel()
-        self.statusBar().addPermanentWidget(self.next_sync_label)
+        self.statusBar().hide()
+
+    def _set_log_open(self, open_: bool):
+        """The log takes room only when asked for; the repos keep the rest."""
+        self.output_pane.setVisible(open_)
+        self._root_layout.setStretchFactor(self.output_pane, 1 if open_ else 0)
+        self.log_toggle.setText("Hide log" if open_ else "Show log")
+        if self.log_toggle.isChecked() != open_:
+            self.log_toggle.setChecked(open_)
+
+    def _set_filter(self, key: str):
+        self._filter = key
+        chip = self._chips.get(key)
+        if chip and not chip.isChecked():
+            chip.setChecked(True)
+        self._apply_filter()
+
+    def _apply_filter(self, *_):
+        needle = self.filter_field.text().strip().lower()
+        for i in range(self.repo_list.count()):
+            item = self.repo_list.item(i)
+            name = item.data(Qt.UserRole)
+            row = self._row_widgets.get(name)
+            if row is None:
+                continue
+            show = needle in name.lower()
+            if self._filter == "attention":
+                show = show and row.needs_attention()
+            elif self._filter == "private":
+                show = show and row.vis_label.text() == "Private"
+            item.setHidden(not show)
 
     # ── File watcher (auto-reload repo list) ──────────────────────
 
@@ -489,22 +600,22 @@ class MainWindow(QMainWindow):
         status = paths.read_last_status()
 
         if not stamp:
-            text = "  Last sync: never"
+            text = "Last sync: never"
         elif status == "attention" and success and success != stamp:
             # The last run left something blocked or errored, so say when work
             # last actually got out — otherwise a red icon has no context.
-            text = f"  Last run: {stamp} (had problems) · Last good sync: {success}"
+            text = f"Last run {stamp[:16]} had problems · last good sync {success[:16]}"
         elif status == "attention":
-            text = f"  Last run: {stamp} (had problems) · No fully clean sync yet"
+            text = f"Last run {stamp[:16]} had problems · no clean sync yet"
         else:
-            text = f"  Last successful sync: {stamp}"
+            text = f"Last sync {stamp[:16]}"
         self.last_sync_label.setText(text)
         self._refresh_next_sync_label()
 
     def _refresh_next_sync_label(self):
         schedule = scheduler.get_schedule()
         if not schedule:
-            self.next_sync_label.setText("   Next sync: not scheduled  ")
+            self.next_sync_label.setText("·  Not scheduled")
             return
         now = datetime.now()
         if schedule["mode"] == "interval":
@@ -523,7 +634,7 @@ class MainWindow(QMainWindow):
             if next_run <= now:
                 next_run += timedelta(days=1)
         self.next_sync_label.setText(
-            f"   Next sync: ~{next_run.strftime('%Y-%m-%d %H:%M')}  "
+            f"·  Next sync ~{next_run.strftime('%a %H:%M')}"
         )
 
     # ── Repo list ─────────────────────────────────────────────────
@@ -574,11 +685,11 @@ class MainWindow(QMainWindow):
 
     def _clamp_name_w(self, width: int) -> int:
         """Keep the Repository column small enough that the window fits the screen."""
-        room = self._screen_width() - 1040 + repo_row.NAME_W
-        return max(200, min(720, width, room))
+        room = self._screen_width() - repo_row.window_min(0)
+        return max(220, min(720, width, room))
 
     def _min_width_for(self, name_w: int) -> int:
-        return min(1040 + name_w - repo_row.NAME_W, self._screen_width())
+        return min(repo_row.window_min(name_w), self._screen_width())
 
     def _set_name_width(self, width: int):
         """Resize the Repository column for the header and every row."""
@@ -601,26 +712,28 @@ class MainWindow(QMainWindow):
         self._name_handle.show()
 
     def _refresh_fleet(self):
-        """One line saying whether every project is synced and backed up."""
+        """The three tiles: synced, backed up, and what needs the user."""
         rows = [r for r in self._row_widgets.values() if not r.is_missing()]
-        if not rows:
-            self.fleet_label.setText("")
-            return
         n = len(rows)
-        synced = sum(1 for r in rows if r.is_synced())
-        backed = sum(1 for r in rows if r.is_backed_up())
         known = any(r._status for r in rows) or any(r._backup for r in rows)
-        if not known:
-            text, color = "Run Dry-run to check sync and backup status", "#6E6E73"
-        elif synced == n and backed == n:
-            text, color = f"✓ All {n} projects are synced and backed up", "#1A7A3A"
+        attention = [r.name for r in self._row_widgets.values() if r.needs_attention()]
+        if not n or not known:
+            self.tile_github.set("—", "run Check to see", "neutral")
+            self.tile_backup.set("—", "run Check to see", "neutral")
         else:
-            text = (f"{synced} of {n} synced to GitHub · "
-                    f"{backed} of {n} backed up")
-            color = "#B45309"
-        self.fleet_label.setText(text)
-        self.fleet_label.setStyleSheet(
-            f"font-size:12px; font-weight:600; padding-left:12px; color:{color};")
+            synced = sum(1 for r in rows if r.is_synced())
+            backed = sum(1 for r in rows if r.is_backed_up())
+            self.tile_github.set(synced, f"of {n} synced",
+                                 "good" if synced == n else "warn")
+            self.tile_backup.set(backed, f"of {n} backed up",
+                                 "good" if backed == n else "warn")
+        if attention:
+            self.tile_attention.set(len(attention), "click to show them", "bad")
+            self.tile_attention.setToolTip("\n".join(attention))
+        else:
+            self.tile_attention.set(0, "all clear" if known else "", "neutral")
+            self.tile_attention.setToolTip("")
+        self._apply_filter()
 
     def _fetch_all_visibility(self):
         gh = paths.find_gh()
@@ -644,6 +757,7 @@ class MainWindow(QMainWindow):
                     row.set_visibility(False)
             except Exception:
                 pass
+        self._apply_filter()
 
     def _build_list_header(self) -> QWidget:
         """Column headings for the repo list, using RepoRow's own geometry so
@@ -663,6 +777,9 @@ class MainWindow(QMainWindow):
 
         # Select-all sits in the checkbox column, lined up with the rows'
         # own boxes, instead of as separate All/None buttons off to the side.
+        mark = QWidget()
+        mark.setFixedWidth(repo_row.MARK_W)
+        lay.addWidget(mark)
         self.select_all_box = QCheckBox()
         self.select_all_box.setFixedWidth(repo_row.CHECK_W)
         self.select_all_box.setToolTip("Check or uncheck every repo")
@@ -674,24 +791,19 @@ class MainWindow(QMainWindow):
         self._name_handle = _ColumnHandle(
             header, self._set_name_width, lambda: self._name_w,
             lambda: self._set_name_width(repo_row.NAME_W))
-        lay.addWidget(cell("Visibility", repo_row.VIS_W))
-        lay.addWidget(cell("Last commit", repo_row.TIME_W,
-                           Qt.AlignRight | Qt.AlignVCenter))
         lay.addWidget(cell("GitHub", repo_row.BADGE_W, Qt.AlignCenter))
         lay.addWidget(cell("Backup", repo_row.BADGE_W, Qt.AlignCenter))
-        # Fixed: every row's Sync + ⋯ pair is exactly ACTIONS_W wide.
-        self._header_actions = cell("Actions", repo_row.ACTIONS_W,
-                                    Qt.AlignLeft | Qt.AlignVCenter)
+        # Fixed: every row's action + ⋯ pair is exactly ACTIONS_W wide.
+        self._header_actions = cell("", repo_row.ACTIONS_W)
         lay.addWidget(self._header_actions)
         lay.addStretch(1)
 
         header.setStyleSheet(
-            "#listHeader { background:#F5F5F7; border:1px solid #E5E5EA;"
+            "#listHeader { background:#FAFAFC; border:1px solid #E5E5EA;"
             " border-bottom:none; border-top-left-radius:8px;"
             " border-top-right-radius:8px; }"
             "#listHeader QLabel { color:#6E6E73; font-size:11px;"
-            " font-weight:600; text-transform:uppercase;"
-            " letter-spacing:0.4px; background:transparent; }"
+            " font-weight:600; background:transparent; }"
         )
         return header
 
@@ -756,10 +868,9 @@ class MainWindow(QMainWindow):
             bits.append(f"{gone} listed repo(s) moved or no longer exist")
         if new:
             bits.append(f"{new} repo(s) on disk are not in your list")
-        self.drift_banner.setText(
-            "Your repo list is out of date — " + ", and ".join(bits) +
-            ". Click ‘Find repos…’ above to fix it. (Dry-run only checks "
-            "the repos already in the list, so it cannot find these.)")
+        self.drift_text.setText(
+            "Your repo list is out of date: " + ", and ".join(bits) +
+            ". Check only looks at listed repos, so it cannot see these.")
         self.drift_banner.show()
 
     def _on_rescan(self):
@@ -869,10 +980,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Nothing to pull",
                 "None of the ticked repos is known to be behind its remote.\n\n"
-                "Run Dry-run first — that is what checks the remotes.")
+                "Run Check first — that is what checks the remotes.")
             return
         if QMessageBox.question(
-            self, "Pull selected",
+            self, "Pull ticked repos",
             "Fast-forward these repos to their remotes?\n\n  "
             + "\n  ".join(targets)
             + "\n\nNothing local is discarded; a repo that has diverged is "
@@ -890,7 +1001,7 @@ class MainWindow(QMainWindow):
         if refused:
             report += ("\n\n" if report else "") + "Left alone:\n  " + "\n  ".join(refused)
         self._append_output(report + "\n")
-        QMessageBox.information(self, "Pull selected", report)
+        QMessageBox.information(self, "Pull ticked repos", report)
 
     def _on_privacy_selected(self):
         """Flip visibility on every ticked repo, in one confirmed step."""
@@ -1251,6 +1362,7 @@ class MainWindow(QMainWindow):
         self._current_repos = repos  # None means all
         self.output_pane.clear()
         self.summary_label.hide()
+        self.log_status.set_full_text("Checking…" if dry_run else "Syncing…")
         self.dry_run_btn.setEnabled(False)
         self.sync_btn.setEnabled(False)
         self._set_all_row_buttons_enabled(False)
@@ -1329,7 +1441,11 @@ class MainWindow(QMainWindow):
         self._on_finished(worst_exit, merged)
 
     def _append_output(self, text: str):
-        self.output_pane.appendPlainText(_ANSI_RE.sub("", text).rstrip("\n"))
+        clean = _ANSI_RE.sub("", text).rstrip("\n")
+        self.output_pane.appendPlainText(clean)
+        last = next((l for l in reversed(clean.splitlines()) if l.strip()), "")
+        if last:
+            self.log_status.set_full_text(last.strip())
 
     def _on_finished(self, exit_code: int, summary: dict):
         self.dry_run_btn.setEnabled(True)
@@ -1439,6 +1555,8 @@ class MainWindow(QMainWindow):
             )
         self.summary_label.setText(text)
         self.summary_label.show()
+        self.log_status.set_full_text(
+            ("Check finished — " if self._current_dry_run else "Sync finished — ") + text)
         self._refresh_tray_icon()
 
         # macOS notification

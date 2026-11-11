@@ -302,10 +302,11 @@ def test_repository_column_resizes_header_and_every_row(qapp, tmp_path, monkeypa
     assert window._header_name.width() == 420
     assert all(r._name_col.width() == 420 for r in window._row_widgets.values())
     # The window must not clip the actions once the column is wider.
-    assert window.minimumWidth() >= 1040 + 420 - 280
+    from app import repo_row
+    assert window.minimumWidth() >= repo_row.window_min(420)
     # Reset (what double-clicking the handle does) goes back to the default.
     window._name_handle.mouseDoubleClickEvent(None)
-    assert window._header_name.width() == 280
+    assert window._header_name.width() == repo_row.NAME_W
 
 
 def test_wide_saved_column_never_makes_window_wider_than_screen(qapp, tmp_path, monkeypatch):
@@ -319,3 +320,33 @@ def test_wide_saved_column_never_makes_window_wider_than_screen(qapp, tmp_path, 
     monkeypatch.setattr(MainWindow, "_screen_width", staticmethod(lambda: 1280))
     window = MainWindow()
     assert window.minimumWidth() <= 1280
+
+
+def test_log_starts_collapsed_and_opens_on_demand(window):
+    assert not window.output_pane.isVisible()
+    window.log_toggle.setChecked(True)
+    assert window.output_pane.isVisible() and window.log_toggle.text() == "Hide log"
+    window.log_toggle.setChecked(False)
+    assert not window.output_pane.isVisible()
+
+
+def test_needs_attention_filter_shows_only_problem_rows(window):
+    rows = list(window._row_widgets.values())
+    if len(rows) < 2:
+        pytest.skip("needs at least two repos")
+    rows[0].set_status("BLOCKED")
+    rows[0].set_blocked(True)
+    window._behind.clear()
+    for r in rows[1:]:
+        r.set_behind(False)
+        r.set_status("SYNCED")
+        r.set_backup("ok")
+    window._refresh_fleet()
+    window._set_filter("attention")
+    shown = [window.repo_list.item(i).data(0x0100)
+             for i in range(window.repo_list.count())
+             if not window.repo_list.item(i).isHidden()]
+    assert shown == [rows[0].name]
+    assert "1" in window.tile_attention.value.text()
+    window._set_filter("all")
+    rows[0].set_blocked(False)

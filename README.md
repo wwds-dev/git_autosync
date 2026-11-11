@@ -20,8 +20,11 @@ home, crafted bundles included; the whole file skips when the lab root's
 `test_header_fit.py` builds the real main window offscreen (`QT_QPA_PLATFORM=offscreen`)
 to check header labels fit, rows are banded on screen, Pull buttons survive a list
 rebuild, the tray uses the native menu with nothing wired to the click, **Open git_autosync**
-runs its steps in order (Dock tile, show, raise, activate, focus), and a window
-hidden to the menu bar stays hidden. `test_appkit_guard.py` runs the `clickCount`
+runs its steps in order (Dock tile, show, raise, activate, focus), a window
+hidden to the menu bar stays hidden, dragging the **Repository** handle resizes the
+header and every row together, and a wide saved column never makes the window wider
+than the screen (those two use a throwaway ini settings file and a fake screen width,
+so they never touch the real saved column width). `test_appkit_guard.py` runs the `clickCount`
 guard against the real Objective-C runtime (the unguarded crash case in a subprocess,
 which must die with SIGABRT naming `clickCount`), parses `app/main.py` to check that
 `main()` really calls `appkit_guard.install()` before building the app (a
@@ -367,7 +370,7 @@ than where it was last seen.
   remote has commits you do not have (pull first), not authorised (check `gh auth`),
   network problem (transient), remote repo not found (renamed/deleted/wrong URL), or
   rejected by a branch protection rule. Anything else still says "see log".
-- The GUI offers the fix: see **Pull** and **Pull selected** below. Both use
+- The GUI offers the fix: see **Pull** and **Pull ticked repos** below. Both use
   `git pull --ff-only`, so they either fast-forward cleanly or refuse. A repo that has
   diverged is left untouched, and the dialog can offer **Rebase and sync** (see **Pull**
   below) or show the `git pull --rebase` command to run yourself.
@@ -502,10 +505,29 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
 
 ### Main window
 
+The window is built in `app/ui_main.py`; each repo row is `app/repo_row.py`.
+
+Top to bottom:
+
+- **Top bar** — the app name, when it last synced and when it runs next, and the
+  two run buttons: **Check** (a dry-run) and **Sync all**. Everything used less often
+  sits behind the **⋯** button next to them (see *More menu* below).
+- **Three tiles** — **On GitHub** (how many projects are synced), **Backup** (how many
+  are backed up) and **Needs you** (how many have a problem). Green when every project
+  is covered, amber when some are not, red when something needs you. Clicking
+  **Needs you** filters the list to those repos; hover it for their names. Before the
+  first Check the tiles say "run Check to see".
+- **Out-of-date banner** — shown when repos on disk and the list disagree, with an
+  **Update list…** button (the same as **Find repos…**).
+- **Filter row** — a search box (matches repo names) and three chips: **All**,
+  **Needs attention**, **Private**.
+- **Repo table**, then a one-line legend (Synced vs Backed up), the commit message
+  field, and the **log strip**.
+
 **Repositories section:**
 
 - **Repo list** — one row per repo in `autosync_repos.txt`. Each row shows:
-  - A **checkbox** — include or exclude this repo from bulk Dry-run / Sync now.
+  - A **checkbox** — include or exclude this repo from **Check** and **Sync all**.
     The header carries its own tristate checkbox, lined up in the same column as the
     rows' own boxes, instead of separate All/None buttons off to the side — checked when
     every repo is, unchecked when none is, and shown partial otherwise; clicking it
@@ -513,16 +535,22 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
   - The repo name first, followed by its containing folder path in muted text, and under
     it a second line saying *why* the row has its status (e.g. "would push 1 commit(s)",
     "backup missing: 2 ref(s) not backed up yet"), cut off with … when long; hover for the
-    full text. A small **↗** right after the name opens the repo's GitHub page (shown
-    only when its `origin` is on GitHub). Column headers keep the checkbox, repository,
-    visibility (Public / Private), last-commit, status, and action fields aligned.
+    full text. The second line also starts with the repo's visibility (Public / Private)
+    and when it was last committed (an amber pill when stale). A small **↗** right after
+    the name opens the repo's GitHub page (shown only when its `origin` is on GitHub).
+    Column headers keep the checkbox, repository, GitHub, Backup and action columns
+    aligned. A row that needs you has a coloured bar on its left edge: red for a blocked,
+    failed or missing repo, amber for a backup gap or a repo behind its remote.
     The columns are fixed-width and the table packs to the left, so on a wide window the
     buttons stay next to their repo name instead of drifting to the far edge (the window's
-    minimum width is 1040px for that reason). Rows are banded in alternating shades.
+    minimum width is about 970px for that reason). Rows are banded in alternating shades.
     Drag the thin handle at the right edge of the **Repository** heading to widen or narrow
     that column for every row (the long second line shows more when it is wider);
-    double-click the handle to reset it. The width is remembered between launches, and
-    the window's minimum width grows with it.
+    double-click the handle to reset it (400px). The width is remembered between launches,
+    and the window's minimum width grows with it, but never past the screen: the column is
+    kept between 200px and 720px and narrow enough for the window to fit the screen's
+    available width, so a width saved on a bigger display cannot push the window off a
+    smaller one.
   - A row for a repo whose folder can no longer be found on disk goes grey and disabled
     except for a **Remove** button, which drops just that entry from
     `autosync_repos.txt` — no files and no GitHub repo are touched.
@@ -555,9 +583,9 @@ it just shells out to `git_autosync.sh` (and, for repo creation, `gh`) via
     | Touches the project's history | Yes — adds a commit to the branch | No — never commits, never changes your files or branches |
     | Clears **Pending** (uncommitted changes) | Yes | No — the files are still uncommitted, just safely copied |
 
-    Every real run does both, so after a clean **Sync now** both badges are green.
+    Every real run does both, so after a clean **Sync all** both badges are green.
     A repo that still says *Pending* after a backup is protected, but not committed — run
-    **Sync now** to commit it (see *Backing up everything on this Mac*).
+    **Sync all** to commit it (see *Backing up everything on this Mac*).
   - **Sync** button — syncs just this repo after the leak-gate clears it.
     Shows a diff preview of pending changes (with human-readable labels —
     "modified", "new file", "untracked", etc.) before you confirm.
@@ -607,15 +635,15 @@ Type a custom commit message before syncing. Leave it blank to use the default
 timestamped message (`autosync: YYYY-MM-DD HH:MM:SS`). The message is passed via
 the `AUTOSYNC_COMMIT_MSG` env var to the engine script.
 
-**Primary actions:**
+**Run buttons (top bar):**
 
-- **Dry-run (safe)** — scans checked repos; never commits or pushes. Safe to run any time.
-- **Sync now** — commits and pushes checked repos after the leak-gate. When a subset
+- **Check** — a dry-run: scans ticked repos; never commits or pushes. Safe to run any time.
+- **Sync all** — commits and pushes checked repos after the leak-gate. When a subset
   of repos is checked, each is run sequentially via `--repo`. Disabled until gitleaks
   is found on disk, with an install hint shown in a banner.
   Shows a **diff preview** with human-readable labels before you confirm.
 
-**Secondary actions:**
+**More menu (⋯ in the top bar):**
 
 - **Find repos…** — scans the Lab workspace, compares discovered Git repositories with
   the effective config, and offers a reconciliation preview. Missing configured paths
@@ -628,27 +656,29 @@ the `AUTOSYNC_COMMIT_MSG` env var to the engine script.
 - **Schedule…** — configure a background `launchd` job: "run every" (15 min /
   30 min / 1 h / 6 h / 12 h / 24 h) or "run daily at" a specific time. Shows the
   current schedule; lets you update or disable it.
-- **Logs** — reveals the log folder in Finder.
-- **Docs** — renders this README in an in-app viewer with a contents sidebar (click a
+- **Show logs in Finder** — reveals the log folder in Finder.
+- **Documentation** — renders this README in an in-app viewer with a contents sidebar (click a
   heading to jump) and a search box (⌘F: all matches highlighted, Enter / Shift+Enter
   to step through them, Esc to clear), with a "Last updated" badge
   reading the README's own commit date (falling back to its file mtime for a
   frozen bundle with no `.git`), so a stale page is obvious rather than trusted.
-- **Edit list** — opens `autosync_repos.txt` in your default editor.
-- **Pull selected** — fast-forwards every ticked repo that the last run found behind its
+- **Edit repo list** — opens `autosync_repos.txt` in your default editor.
+- **Pull ticked repos** — fast-forwards every ticked repo that the last run found behind its
   remote, after a confirmation listing them. Repos that are level are skipped, diverged
   ones are reported and left alone. If none is known to be behind, it tells you to run
-  Dry-run first (that is what checks the remotes).
-- **Privacy…** — sets every ticked repo to private or public in one confirmed step
+  **Check** first (that is what checks the remotes).
+- **Change privacy of ticked repos…** — sets every ticked repo to private or public in one confirmed step
   (Yes = private, No = public, Cancel = leave them).
 - **Hide to menu bar** — closes the window and drops the Dock icon; the app keeps
   running in the menu bar.
-- **Quit** — exits completely, after asking.
+- **Quit git_autosync** — exits completely, after asking.
 
-**Output pane:**
+**Log strip and output:**
 
-Live log output from the engine script, with ANSI colour codes stripped for
-readability. After a blocked run, the output pane appends a **leak report**
+The bottom of the window is a one-line strip showing the engine's latest output line
+while a run is going, and the run's summary afterwards. **Show log** opens the full
+live log below it (ANSI colour codes stripped); **Hide log** folds it away again, so
+the repo list keeps the space when you don't need the log. After a blocked run, the output pane appends a **leak report**
 listing the file, rule, and fingerprint that triggered the gate for each blocked
 repo, so you know exactly what to fix without opening the log file.
 

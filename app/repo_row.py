@@ -29,25 +29,37 @@ _BACKUP = {
 # Column geometry, shared with the header row above the list so the two line
 # up. Changing a width here changes the header too. Every column is fixed-width
 # and the actions come last, so no button's text can push another out of line.
-ROW_MARGINS = (10, 7, 10, 7)
+ROW_MARGINS = (0, 8, 10, 8)   # left 0: the attention marker sits on the edge
 ROW_SPACING = 10
+MARK_W  = 3    # coloured bar at the row's left edge when it needs attention
 CHECK_W = 20
-NAME_W  = 280  # the name column is fixed, so the actions sit just after it
-               # instead of being flung to the far edge of a wide window
-VIS_W   = 70   # fits the VISIBILITY heading; Public / Private
-TIME_W  = 96   # fits the 'LAST COMMIT' heading; see tests/test_header_fit.py
-BADGE_W = 108
+NAME_W  = 400  # name, and under it visibility · last commit · detail
+VIS_W   = 70   # kept for callers; visibility now sits on the name's 2nd line
+TIME_W  = 96
+BADGE_W = 112
 SYNC_W  = 76   # Sync, or Publish… on a repo with no remote yet
 MENU_W  = 34   # the ⋯ menu: Dry-run, Privacy, Fix leak…
 EXTRA_W = 76   # the one conditional button: Fix leak… or Pull
 ACTIONS_W = SYNC_W + ROW_SPACING + MENU_W
 
-_TIME_STYLE  = "color:#6E6E73; font-size:11px;"
+
+def window_min(name_w: int) -> int:
+    """Narrowest window that shows every column with the name at name_w."""
+    row = (ROW_MARGINS[0] + ROW_MARGINS[2] + MARK_W + CHECK_W + name_w
+           + 2 * BADGE_W + ACTIONS_W + EXTRA_W + 6 * ROW_SPACING)
+    return row + 36 + 24   # window margins, list frame and scrollbar
+
+_TIME_STYLE  = "color:#6E6E73; font-size:11px; background:transparent;"
 _STALE_STYLE = "background:#FFF8E7; color:#92400E; border-radius:5px; padding:2px 7px; font-size:11px; font-weight:600;"
 _EMPTY_STYLE = "background:transparent;"
 
 
-_STRIPE_BG = "#EFEFF4"   # ~6% below white: visible as a band, still quiet
+_STRIPE_BG = "#EFEFF4"
+
+
+def _pill(bg: str, fg: str) -> str:
+    return (f"background:{bg}; color:{fg}; border-radius:10px;"
+            " padding:3px 10px; font-size:11px; font-weight:600;")   # ~6% below white: visible as a band, still quiet
 
 
 class _ElidedLabel(QLabel):
@@ -77,12 +89,22 @@ class RepoRow(QWidget):
         super().__init__()
         self.name = name
         self._status = None
+        self._backup = None
+        self._behind = False
+        self._blocked = False
         self._missing = False
         self.github_url: str | None = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(*ROW_MARGINS)
         layout.setSpacing(ROW_SPACING)
+
+        # A coloured edge for rows that need the user: red for a blocked or
+        # failed sync, amber for a backup gap or a repo behind its remote.
+        self.marker = QWidget()
+        self.marker.setFixedWidth(MARK_W)
+        self.marker.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        layout.addWidget(self.marker)
 
         # Selection checkbox
         self.checkbox = QCheckBox()
@@ -121,26 +143,28 @@ class RepoRow(QWidget):
         self.label.setToolTip(name)
         self.label.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
         col.addWidget(self.label)
-        self.detail_label = _ElidedLabel()
-        self.detail_label.setStyleSheet("color:#6E6E73; font-size:11px; background:transparent;")
-        col.addWidget(self.detail_label)
-        layout.addWidget(name_col)
-
+        meta = QHBoxLayout()
+        meta.setContentsMargins(0, 0, 0, 0)
+        meta.setSpacing(5)
+        muted = "color:#8E8E93; font-size:11px; background:transparent;"
         self.vis_label = QLabel("")
-        self.vis_label.setFixedWidth(VIS_W)
-        self.vis_label.setStyleSheet("color:#6E6E73; font-size:11px; background:transparent;")
-        layout.addWidget(self.vis_label)
-
-        # Last-synced time (subtle, always shown when known)
+        self.vis_label.setStyleSheet(muted)
+        meta.addWidget(self.vis_label)
+        self._dot1 = QLabel("·")
+        self._dot1.setStyleSheet(muted)
+        meta.addWidget(self._dot1)
+        # Last commit time (subtle; amber pill when stale)
         self.time_label = QLabel()
-        self.time_label.setFixedWidth(TIME_W)
-        self.time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.time_label.setStyleSheet(_EMPTY_STYLE)
-        self.time_label.setToolTip(
-            "When git_autosync last pushed this repo. Commits you or another "
-            "tool already pushed still show as Clean — this is not the date of "
-            "the last commit.")
-        layout.addWidget(self.time_label)
+        meta.addWidget(self.time_label)
+        self._dot2 = QLabel("·")
+        self._dot2.setStyleSheet(muted)
+        meta.addWidget(self._dot2)
+        self.detail_label = _ElidedLabel()
+        self.detail_label.setStyleSheet(muted)
+        meta.addWidget(self.detail_label, stretch=1)
+        col.addLayout(meta)
+        layout.addWidget(name_col)
 
         # Colored status badge — hidden until first run
         self.badge = QLabel()
@@ -244,6 +268,25 @@ class RepoRow(QWidget):
         self.set_status(None)
         self.set_backup(None)
 
+    def _sync_meta(self):
+        """Hide the separators next to empty parts of the second line."""
+        self._dot1.setVisible(bool(self.vis_label.text()) and bool(self.time_label.text()))
+        self._dot2.setVisible(bool(self.detail_label._full))
+
+    def needs_attention(self) -> bool:
+        return (self._missing or self._blocked or self._behind
+                or self._status in ("BLOCKED", "ERROR", "MISSING")
+                or self._backup in ("failed", "partial"))
+
+    def _paint_marker(self):
+        if self._missing or self._blocked or self._status in ("BLOCKED", "ERROR", "MISSING"):
+            color = "#E0453A"
+        elif self._behind or self._backup in ("failed", "partial"):
+            color = "#E0A030"
+        else:
+            color = "transparent"
+        self.marker.setStyleSheet(f"background:{color}; border-radius:1px;")
+
     def set_name_width(self, width: int):
         """The Repository column is the one users resize (drag its header edge)."""
         self._name_col.setFixedWidth(width)
@@ -283,13 +326,11 @@ class RepoRow(QWidget):
 
     def set_status(self, status: str | None):
         self._status = status
+        self._paint_marker()
         if status and status in _BADGE:
             bg, fg, text = _BADGE[status]
             self.badge.setText(text)
-            self.badge.setStyleSheet(
-                f"background:{bg}; color:{fg}; border-radius:9px;"
-                f" padding:3px 8px; font-size:11px; font-weight:600;"
-            )
+            self.badge.setStyleSheet(_pill(bg, fg))
         else:
             self.badge.setText("—")
             self.badge.setStyleSheet(
@@ -298,12 +339,11 @@ class RepoRow(QWidget):
     def set_backup(self, state: str | None):
         """state: ok / partial / missing / failed, or None when unknown."""
         self._backup = state
+        self._paint_marker()
         if state in _BACKUP:
             bg, fg, text = _BACKUP[state]
             self.backup_badge.setText(text)
-            self.backup_badge.setStyleSheet(
-                f"background:{bg}; color:{fg}; border-radius:9px;"
-                f" padding:3px 8px; font-size:11px; font-weight:600;")
+            self.backup_badge.setStyleSheet(_pill(bg, fg))
         else:
             self.backup_badge.setText("—")
             self.backup_badge.setStyleSheet(
@@ -324,8 +364,9 @@ class RepoRow(QWidget):
             self.time_label.setText(time_str)
             self.time_label.setStyleSheet(_STALE_STYLE)
         else:
-            self.time_label.setText(time_str)
+            self.time_label.setText(f"committed {time_str}")
             self.time_label.setStyleSheet(_TIME_STYLE)
+        self._sync_meta()
 
     def set_stale(self, days: int | None):
         """Legacy shim — callers that pass days still work."""
@@ -350,6 +391,7 @@ class RepoRow(QWidget):
         else:
             self.vis_label.setText("Public")
             self.privacy_btn.setText("Make private…")
+        self._sync_meta()
 
     def is_missing(self) -> bool:
         return self._missing
@@ -371,6 +413,7 @@ class RepoRow(QWidget):
         for w in (self, self.label, self.badge, self.backup_badge, self.detail_label):
             w.setToolTip(tip)
         self.detail_label.set_full_text(tip)
+        self._sync_meta()
 
     def set_missing(self, missing: bool):
         """Entry no longer resolves to a repo on disk — say so and disable it.
@@ -407,6 +450,7 @@ class RepoRow(QWidget):
         """Offer the fix next to the problem, rather than only naming it."""
         self._behind = behind
         self._show_conditional()
+        self._paint_marker()
 
     def _show_conditional(self):
         """One conditional button at most — Fix leak… beats Pull — so a row
@@ -439,6 +483,7 @@ class RepoRow(QWidget):
                 "QPushButton:hover { background:#FAD9D5; border-color:#D98B80; }"
             )
         self._show_conditional()
+        self._paint_marker()
 
     def set_buttons_enabled(self, enabled: bool):
         self.menu_btn.setEnabled(enabled)
