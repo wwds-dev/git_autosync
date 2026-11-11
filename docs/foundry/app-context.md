@@ -44,6 +44,9 @@ sign-off.
 ## Invariants
 <things agents must never do or imply, e.g. "no real money", "no network calls", copy rules>
 
+## Models used
+None. Inventory from the code on 2026-11-11 (Foundry v9): no model is called. The only match is `noreply@anthropic.com` in `git_autosync.sh:340`, an allowed commit-author email for Claude Code co-authored commits, not an API call. It talks to git, gitleaks and GitHub only.
+
 ## Domain specialist
 None. For a regulated or expert domain (money, insurance, health, law, ...), name the key
 (`finance`, `insurance-compliance`, ...) and list: the domain, the rules and standards that apply
