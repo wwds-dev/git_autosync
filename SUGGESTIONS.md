@@ -4,6 +4,8 @@ Status: `IDEA` · `CONSIDERING` · `PLANNED` · `DONE` · `REJECTED`
 
 ---
 
+## Open
+
 | # | Suggestion | Category | Effort | Status |
 |---|---|---|---|---|
 | 3 | Per-repo commit-message templates | feature | M | CONSIDERING |
@@ -44,6 +46,8 @@ Status: `IDEA` · `CONSIDERING` · `PLANNED` · `DONE` · `REJECTED`
 | ↗ link to each repo's GitHub page; **Link to origin** for a push-only branch with no upstream | Oct 2026 |
 | Tray dot only opens the native menu and never fronts the window (`clickCount` guard for macOS 27) | Oct 2026 |
 | Build in `build.noindex/` and update the installed bundle in place, so Spotlight lists the app once | Oct 2026 |
+| Repository column resizable from a header handle (double-click resets, width remembered), clamped so the window never outgrows the screen | Nov 2026 |
+| Repository list gets four times the output pane's height | Nov 2026 |
 
 ## Rejected
 
