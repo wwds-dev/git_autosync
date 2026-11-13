@@ -22,7 +22,8 @@ logs/*.log
 *.zip
 output/
 .DS_Store
-.claude/
+.claude/*
+!.claude/settings.json
 
 # Engine run-state, written next to the script when AUTOSYNC_STATE_DIR is unset
 # (STATE_DIR defaults to $SCRIPT_DIR). Without these, running the CLI from the
