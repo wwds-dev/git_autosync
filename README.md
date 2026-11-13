@@ -394,6 +394,29 @@ the GUI points this at its Application Support folder). Dry-runs never touch
 it. This is how the GUI's status bar stays accurate regardless of whether a sync
 was triggered by hand or by the background schedule.
 
+## Repo hygiene: has it landed?
+
+Backing work up is not the same as finishing it. `scripts/hygiene.py` reads the
+repo list and, per repo, reports what a person still has to do: **uncommitted
+files**, **commits not on the remote** (or a branch with no remote branch),
+**behind** or **diverged** from it, **local branches not merged** into the default
+branch, and **linked worktrees with uncommitted work** (another session's
+unfinished edits). Stashes are noted, not flagged. It changes nothing.
+
+Every real, full run (not `--dry-run`, not `--only`) ends with
+`hygiene.py --fetch`, so "behind" and "unpushed" are true as of that run, and
+writes `hygiene.json` beside `last_sync.txt` (gitignored). The log gets one
+line: `hygiene: N of M repos need attention`. It never fails a sync and does not
+turn the tray to attention: dirty work in the middle of a session is normal.
+Lab Hub reads the file: a "N to land" badge on each app tile and a **Check
+repos** button on the launchpad.
+
+    python3 scripts/hygiene.py --text          # readable, local state only
+    python3 scripts/hygiene.py --fetch --out hygiene.json
+
+A branch merged on GitHub by squash still counts as "not merged" until deleted
+locally; that is git's answer, not a bug.
+
 ## Exit codes
 
 - `0` — everything synced or nothing to do.

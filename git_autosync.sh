@@ -1250,6 +1250,20 @@ for s in "${SUMMARY[@]:-}"; do [ -n "$s" ] && log "   $s"; done
 log "synced=$N_SYNCED blocked=$N_BLOCKED skipped=$N_SKIP errors=$N_ERR noop=$N_NOOP unlisted=$N_UNLISTED"
 log "=== git_autosync end ==="
 
+# Repo hygiene: is the work committed, pushed and merged, not just backed up?
+# Report only, never a change; the file is what Lab Hub's badges read. A failure
+# here must not fail the sync, so it only logs.
+if [ "$DRY_RUN" -eq 0 ] && [ -z "$ONLY" ] && [ -f "$SCRIPT_DIR/scripts/hygiene.py" ]; then
+  BK_TMP_HYG="$(mktemp "${TMPDIR:-/tmp}/autosync_hygiene.XXXXXX")"
+  if python3 "$SCRIPT_DIR/scripts/hygiene.py" --fetch --repos "$CONFIG" \
+       --out "$STATE_DIR/hygiene.json" --text >"$BK_TMP_HYG" 2>&1; then
+    log "hygiene: $(tail -n 1 "$BK_TMP_HYG")"
+  else
+    log "hygiene: report failed"
+  fi
+  rm -f "$BK_TMP_HYG"
+fi
+
 # Record when a real (non-dry-run) run last completed, regardless of outcome,
 # plus a one-word status ("ok" / "attention") — the GUI's tray icon and the
 # scheduled background job both read these two files.
