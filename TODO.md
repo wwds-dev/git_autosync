@@ -8,6 +8,8 @@
 
 ## v2 — current
 
+- [ ] `P2` `bug` `@ai` **Hygiene measures "unmerged" against `main`, not the repo's real trunk.** SYNDUSTRYX integrates on `codex/handoff-checkpoint-2026-10-23` (104 commits ahead of `main`), so the report says 35 unmerged branches where 14 are. Compare against the checked-out trunk, or a per-repo `trunk:` override in `autosync_repos.txt`.
+- [ ] `P3` `feature` `@ai` **Hygiene could name squash-merged branches** (merged PR via `gh`) so Lab Hub tells "delete me" from "unfinished"; the 2026-11-13 triage had to do that by hand.
 - [x] `P1` `feature` `@ai` **Repo hygiene report** (2026-11-13): `scripts/hygiene.py` says per repo what has not landed (uncommitted, unpushed, behind or diverged, unmerged branches, dirty worktrees); each full run writes `hygiene.json`; Lab Hub shows it. `tests/test_hygiene.py`, mutation-checked.
 - [x] `P1` `feature` `@ai` **Lose the Mac, keep working** (`docs/specs/restore-and-continue.md`, approved 2026-10-21): `restore.sh` + manifest, hourly `--backup-only` agent, app data and configs in the Drive copy (`_Admin/backup/backup_paths.txt`, SQLite via `.backup`).
 - [x] `P1` `security` `@me` **Item 4: secrets.** `.env` files and now app data (databases) sit unencrypted in Google Drive; `~/.ssh/id_rsa` and the gh token are backed up nowhere. Next spec. Built 2026-10-21 (`backup_manager/docs/specs/secrets-vault.md`, owner-approved): bundle to the Proton vault, `restore-secrets.sh` here, snapshots keep credential names out of `.git/objects`; SSH key and gh token deliberately not backed up. Owner steps below.
