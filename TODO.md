@@ -20,7 +20,7 @@
 
 - [x] `P1` `feature` `@ai` **Back up everything on this Mac, not just the checked-out branch** (`docs/specs/full-mac-backup.md`, approved 2026-10-20). Branches, every worktree's uncommitted work and stashes go to `refs/backup/*` in private `wwds-dev/mac_backup`; rows say **Backed up** only when all of it is there; unlisted repos are flagged; sweep commits only on the default branch.
 - [x] `P1` `infra` `@ai` **Private `wwds-dev/mac_backup` repo created** 2026-10-20 (owner-approved), empty until the first real run of this build.
-- [ ] `P2` `infra` `@me` **Decide on the two unlisted repos** the scan flags: the lab root (`wwds-dev/lab`, already on GitHub) and `~/Documents/Websites/shopfront` (no remote). Add each to the list, or accept the attention state.
+- [ ] `P2` `infra` `@me` **Decide on the two unlisted repos** the scan flags: the lab root (`wwds-dev/lab`, already on GitHub) and `~/Documents/lab/websites/shopfront_website` (since listed, remote `wwds-dev/shopfront_website`). Add each to the list, or accept the attention state.
 - [x] `P2` `security` `@ai` **Author emails are checked before pushing to the backup repo** (`AUTOSYNC_ALLOWED_EMAILS`; owner allowed the wwds-dev and Claude noreply addresses, 2026-10-20).
 - [ ] `P2` `security` `@ai` **The origin push has no identity check.** Only the backup push checks author/committer emails; a commit with a real address on a branch with an upstream would still reach origin.
 - [ ] `P2` `security` `@me` **Pin an owner-approved version of `.gitleaks.toml` / `.gitleaksignore`.** The gate trusts origin's default branch; anything with push credentials (agents use the owner's) can loosen the scanner by pushing a config by hand (security review, fourth round).

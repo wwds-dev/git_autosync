@@ -1207,7 +1207,7 @@ fi
 # the directory itself only (the lab root, whose children are other repos).
 # Linked worktrees are skipped: they belong to a listed repo and are
 # snapshotted with it. Symlinks are not followed.
-SCAN_ROOTS="${AUTOSYNC_SCAN_ROOTS-$LAB_ACTIVE=4:$HOME/Documents/lab=0:$HOME/Documents/Websites=2}"
+SCAN_ROOTS="${AUTOSYNC_SCAN_ROOTS-$LAB_ACTIVE=4:$HOME/Documents/lab=0:$HOME/Documents/lab/websites=2}"
 find_unlisted(){
   local listed root depth gitp top real line entry rest
   listed="$BK_TMP/listed"; : > "$listed"

@@ -233,7 +233,7 @@ A dry-run shows **Pending** for a repo with something not yet backed up;
 
 **Repos nothing backs up.** At the end of a full run the engine looks for git
 repos that are not in the list under `active/` (4 levels), the lab root itself and
-`~/Documents/Websites/` (2 levels), and reports each as `UNLISTED`, with "no
+`~/Documents/lab/websites/` (2 levels), and reports each as `UNLISTED`, with "no
 GitHub remote" when that applies. They count toward the tray's attention state.
 Linked worktrees are not reported: they belong to their repo. Override the roots
 with `AUTOSYNC_SCAN_ROOTS="<dir>=<depth>:..."` (empty switches it off).
