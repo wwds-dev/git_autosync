@@ -13,6 +13,7 @@ Status: `IDEA` · `CONSIDERING` · `PLANNED` · `DONE` · `REJECTED`
 | 5 | Parallel repo scanning; gitleaks dominates runtime | performance | M | IDEA |
 | 6 | Notification on a blocked repo, rather than a line in the log | feature | S | IDEA |
 | 7 | A "publish this project" wizard wrapping `--create-remote`, `.gitignore` check and first push | feature | L | IDEA |
+| 8 | One safety app: merge sync, backup and repo hygiene (this tool, Backup Control Center, Lab Hub's Land) so commits and worktree cleanup have one owner and one menu-bar icon (portfolio review 2026-11-18) | design | XL | IDEA |
 
 ## Done
 
