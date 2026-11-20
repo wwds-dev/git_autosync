@@ -1,5 +1,7 @@
 # git_autosync — TODO
 
+> **Testing first (owner, 2026-11-20).** `P0` now means: needed before the owner can test this app on his own Mac, or a security must. Everything else waits until after testing, and no new feature or redesign row starts unless the owner asks for it.
+
 > **Legend** — priority `P0` critical · `P1` high · `P2` normal · `P3` low
 > categories `security` `bug` `feature` `performance` `design` `docs` `testing` `infra` `research`
 > owner `@me` (needs you — accounts, keys, money, judgement) · `@ai` (Claude can do this)
@@ -9,7 +11,7 @@
 ## v2 — current
 
 - [x] `P2` `testing` `@ai` **Code-level readiness audit (promises vs code).** Check every promise in the README and `docs/foundry/app-context.md` against the code (leak gate, sweep and snapshot staging, push identity, coverage list, GUI); classify each Delivered / Narrower / Stub; findings to `docs/audit/` and this file. Own chat, Opus high, ~30–60 min. Requested 2026-11-18 after the lab-wide doc sweep. Done 2026-11-18: `docs/audit/readiness-audit-2026-11-18.md` (1 blocker, 3 high, 5 medium); new items below.
-- [ ] `P1` `bug` `@me` **Repos agents work in still run in sweep mode** (audit B1). `lab_hub` got three `autosync:` commits 2026-11-13..17 (one +425 lines, on `origin/main`) and has 12 uncommitted files of in-progress Foundry work; `syndustryx`, `git_autosync`, `backup_manager` are also bare. Add `push-only` to each in the live list before the next full run.
+- [ ] `P0` `bug` `@me` **Repos agents work in still run in sweep mode** (audit B1). `lab_hub` got three `autosync:` commits 2026-11-13..17 (one +425 lines, on `origin/main`) and has 12 uncommitted files of in-progress Foundry work; `syndustryx`, `git_autosync`, `backup_manager` are also bare. Add `push-only` to each in the live list before the next full run.
 - [ ] `P1` `bug` `@ai` **Make push-only the default and reject unknown mode flags** (audit B1, H3). A bare line or a typo (`push_only`) is a sweep (`git_autosync.sh:1110`); **Find repos…** relocate drops the flag (`app/rescan_dialog.py:126-139` + `app/config.py:79-81`); the GUI erases unknown flags and comments on save; new entries are added as sweeps. Require an explicit `sweep` flag, make an unknown flag an ERROR row, carry flags across a relocate.
 - [ ] `P2` `security` `@ai` **Committed files gitleaks cannot read are pushed unscanned** (audit M2). `bk_filter` covers snapshots, stashes and the sweep only; hand-made commits and branch tips with `*.sqlite`, `*.pdf`, lock files, `*.svg` or binaries go to origin and `mac_backup` as they are. Check `@{u}..HEAD_SCANNED` and planned tips the same way, or narrow the README's "no clean scan, no push" promise.
 - [ ] `P2` `bug` `@ai` **Scheduled-run failures show only as a tray colour** (audit M3). Notifications fire only for app-started runs (`app/ui_main.py:1562`); UNLISTED turns the dot red, so `active/overseer` will mask a real block. Notify from the engine on BLOCKED/ERROR, show UNLISTED amber, add the error count to the notification.
