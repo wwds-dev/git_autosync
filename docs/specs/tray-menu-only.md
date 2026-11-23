@@ -1,6 +1,6 @@
 # Spec: the menu bar dot only opens its menu
 
-Needs: define (Shipped October before activity logging; review and QA are recorded in this spec, not in docs/audit/.)
+Needs: define, build, review, verify (Shipped October 2026; review in docs/audit/tray-menu-only-review.md; no QA report.)
 
 Status: **approved by the owner 2026-10-14; built and verified on hardware 2026-10-14**
 
