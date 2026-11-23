@@ -1,5 +1,7 @@
 # Spec: the menu bar dot only opens its menu
 
+Needs: define (Shipped October before activity logging; review and QA are recorded in this spec, not in docs/audit/.)
+
 Status: **approved by the owner 2026-10-14; built and verified on hardware 2026-10-14**
 
 ## Define

@@ -1,5 +1,7 @@
 # Spec: back up everything on this Mac, not just the checked-out branch
 
+Needs: define, verify (Shipped October before activity logging; review and QA are recorded in this spec, not in docs/audit/. Open: on-screen smoke checks not done.)
+
 Status: **Define and Architect approved by the owner 2026-10-20** (all five decisions as
 recommended; see the end). **Released 2026-10-21 as v2.118 (`7c8bfde`)**; review and security findings fixed
 (see "After review" and "Release" at the end).

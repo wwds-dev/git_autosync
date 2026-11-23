@@ -1,5 +1,7 @@
 # Spec: lose the Mac, keep working
 
+Needs: define, verify (Shipped October before activity logging; review and QA are recorded in this spec, not in docs/audit/. Open: app data to Drive not yet run for real.)
+
 Status: **Define and Architect approved by the owner 2026-10-21**, all four decisions as
 recommended (hourly; worktrees as branches; the listed app-data paths, no `~/.ssh` or gh
 token; app data to Drive now in plaintext until item 4). **Released 2026-10-21.**
